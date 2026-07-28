@@ -99,7 +99,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="mt-5"><Uploader onUpload={handleUpload} loading={loading} /></div>
+        <div className="mt-5"><Uploader onUpload={handleUpload} loading={loading} loadedName={result?.filename ?? null} /></div>
 
         {error && <div className="mt-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
 
