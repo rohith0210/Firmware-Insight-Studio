@@ -1,7 +1,9 @@
 import { useState } from "react";
 import Uploader from "./components/Uploader";
 import Dashboard from "./components/Dashboard";
+import MemoryTreemap from "./components/MemoryTreemap";
 import SectionTable from "./components/SectionTable";
+import SymbolExplorer from "./components/SymbolExplorer";
 
 export type ParseResult = {
   filename: string;
@@ -10,28 +12,40 @@ export type ParseResult = {
   sections: { name: string; type: string; addr: number; size: number; flags: number }[];
   symbols: { name: string; value: number; size: number; type: string; bind: string; section: string }[];
   summary: Record<string, number>;
+  treemap_data: { name: string; size: number; children: { name: string; size: number }[] }[];
 };
 
 export default function App() {
   const [result, setResult] = useState<ParseResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSection, setSelectedSection] = useState<string | null>(null);
 
   const handleUpload = async (file: File) => {
     setLoading(true);
     setError(null);
+    setSelectedSection(null); // Reset filter on new upload
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("http://localhost:8000/api/upload", { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
-      setResult(await res.json());
+      
+      const data = await res.json();
+      console.log("📊 Full Upload result:", data);
+      console.log("🗺️ TreeMap data:", data.treemap_data);
+      setResult(data);
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
   };
+
+  // Filter symbols by selected section
+  const filteredSymbols = selectedSection
+    ? result?.symbols.filter((s) => s.section === selectedSection) || []
+    : result?.symbols || [];
 
   return (
     <div className="min-h-screen p-8 max-w-6xl mx-auto">
@@ -53,7 +67,18 @@ export default function App() {
       {result && (
         <div className="mt-8 space-y-6">
           <Dashboard result={result} />
-          <SectionTable sections={result.sections} />
+          {result.treemap_data && result.treemap_data.length > 0 && (
+            <MemoryTreemap data={result.treemap_data} />
+          )}
+          <SectionTable 
+            sections={result.sections} 
+            onSectionClick={setSelectedSection}
+            selectedSection={selectedSection}
+          />
+          <SymbolExplorer 
+            symbols={filteredSymbols}
+            title={selectedSection ? `Symbols in ${selectedSection}` : "All Symbols"}
+          />
         </div>
       )}
     </div>

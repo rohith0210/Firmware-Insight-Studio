@@ -21,6 +21,7 @@ class ParseResult(BaseModel):
     sections: List[Dict[str, Any]]
     symbols: List[Dict[str, Any]]
     summary: Dict[str, int]
+    treemap_data: List[Dict[str, Any]]
 
 def parse_elf(path: str) -> dict:
     with open(path, "rb") as f:
@@ -28,47 +29,93 @@ def parse_elf(path: str) -> dict:
         sections = []
         symbols = []
         summary = {}
+        section_symbols = {}
+        
+        # Build a map of section index -> name
+        section_map = {i: sec.name for i, sec in enumerate(elf.iter_sections())}
 
         for sec in elf.iter_sections():
             if not sec.name:
                 continue
+            
+            sec_size = sec["sh_size"]
             sections.append({
                 "name": sec.name,
                 "type": sec["sh_type"],
                 "addr": sec["sh_addr"],
-                "size": sec["sh_size"],
+                "size": sec_size,
                 "flags": sec["sh_flags"],
             })
-            # Track key sections for the dashboard
+            
             if sec.name in (".text", ".data", ".bss", ".rodata"):
-                summary[sec.name] = sec["sh_size"]
+                summary[sec.name] = sec_size
 
+            # Extract symbols from .symtab AND .dynsym
             if isinstance(sec, SymbolTableSection):
                 for sym in sec.iter_symbols():
-                    if sym.name and sym["st_size"] > 0:
-                        symbols.append({
-                            "name": sym.name,
-                            "value": sym["st_value"],
-                            "size": sym["st_size"],
-                            "type": sym["st_info"]["type"],
-                            "bind": sym["st_info"]["bind"],
-                            "section": sec.name,
-                        })
+                    if not sym.name:
+                        continue
+                    
+                    # Resolve the actual section where this symbol lives
+                    shndx = sym['st_shndx']
+                    if shndx == 'SHN_ABS':
+                        actual_sec = "ABS"
+                    elif shndx == 'SHN_COMMON':
+                        actual_sec = "COMMON"
+                    elif shndx == 'SHN_UNDEF':
+                        actual_sec = "UNDEF"
+                    else:
+                        actual_sec = section_map.get(shndx, "UNKNOWN")
 
-        # Sort symbols by size descending — useful for "biggest offenders" view
+                    sym_data = {
+                        "name": sym.name,
+                        "value": sym['st_value'],
+                        "size": sym['st_size'],
+                        "type": sym['st_info']['type'],
+                        "bind": sym['st_info']['bind'],
+                        "section": actual_sec,
+                    }
+                    symbols.append(sym_data)
+                    
+                    # Group by actual section for Treemap
+                    if actual_sec in (".text", ".data", ".bss", ".rodata"):
+                        if actual_sec not in section_symbols:
+                            section_symbols[actual_sec] = []
+                        section_symbols[actual_sec].append(sym_data)
+
+        # Sort all symbols by size descending
         symbols.sort(key=lambda s: s["size"], reverse=True)
+
+        # Build hierarchical Treemap data
+        treemap_data = []
+        for sec_name, syms in section_symbols.items():
+            syms.sort(key=lambda x: x["size"], reverse=True)
+            top_syms = syms[:20]
+            other_size = sum(s["size"] for s in syms[20:])
+            
+            children = [{"name": s["name"], "size": s["size"]} for s in top_syms]
+            if other_size > 0:
+                children.append({"name": "Other", "size": other_size})
+                
+            total_size = sum(s["size"] for s in syms)
+            treemap_data.append({
+                "name": sec_name,
+                "size": total_size if total_size > 0 else summary.get(sec_name, 0),
+                "children": children
+            })
 
         return {
             "arch": elf.get_machine_arch(),
             "entry": hex(elf.header["e_entry"]),
             "sections": sections,
-            "symbols": symbols[:1000],  # cap for UI perf; we'll paginate later
+            "symbols": symbols[:500],
             "summary": summary,
+            "treemap_data": treemap_data,
         }
 
 @app.post("/api/upload", response_model=ParseResult)
 async def upload_firmware(file: UploadFile = File(...)):
-    allowed = (".elf", ".o", ".out", ".axf")
+    allowed = (".elf", ".o", ".out", ".axf", ".bin")
     if not file.filename.lower().endswith(allowed):
         raise HTTPException(400, f"Only {allowed} files supported")
 
@@ -83,7 +130,8 @@ async def upload_firmware(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, f"Parse error: {str(e)}")
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 @app.get("/api/health")
 def health():
