@@ -1,0 +1,22 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+*.swp
+.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploaded files
+*.elf
+*.bin
+*.map
