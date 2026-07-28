@@ -1,85 +1,47 @@
 import { useState } from "react";
 
-type Symbol = {
-  name: string;
-  value: number;
-  size: number;
-  type: string;
-  bind: string;
-  section: string;
-};
+type Sym = { name: string; value: number; size: number; type: string; bind: string; section: string };
 
-export default function SymbolExplorer({ 
-  symbols, 
-  title = "Symbol Explorer" 
-}: { 
-  symbols: Symbol[];
-  title?: string;
-}) {
+export default function SymbolExplorer({ symbols, title = "Symbol Explorer" }: { symbols: Sym[]; title?: string }) {
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
-
-  const filtered = symbols.filter((sym) =>
-    sym.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = symbols.filter(s => s.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <h2 className="text-xl font-semibold mb-4">🔍 {title}</h2>
-      
-      <div className="mb-4">
-        <input
-          type="text"
-          placeholder="Search symbols (e.g., main, HAL_GPIO)..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 transition"
-        />
-      </div>
-
-      <div className="text-sm text-slate-400 mb-3">
-        Showing {Math.min(filtered.length, limit)} of {filtered.length} symbols
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-400 border-b border-slate-700">
-              <th className="pb-2 font-medium">Name</th>
-              <th className="pb-2 font-medium">Section</th>
-              <th className="pb-2 font-medium">Address</th>
-              <th className="pb-2 font-medium">Size</th>
-              <th className="pb-2 font-medium">Type</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.slice(0, limit).map((sym, idx) => (
-              <tr key={idx} className="border-b border-slate-800 hover:bg-slate-800/50 transition">
-                <td className="py-2 font-mono text-sky-400">{sym.name}</td>
-                <td className="py-2 text-slate-300">{sym.section}</td>
-                <td className="py-2 font-mono text-slate-400">0x{sym.value.toString(16)}</td>
-                <td className="py-2 text-slate-300">{(sym.size / 1024).toFixed(2)} KB</td>
-                <td className="py-2 text-slate-400">{sym.type}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {filtered.length > limit && (
-        <button
-          onClick={() => setLimit(limit + 50)}
-          className="mt-4 px-4 py-2 bg-sky-600 hover:bg-sky-700 rounded-lg text-white font-medium transition"
-        >
-          Load More ({filtered.length - limit} more)
-        </button>
-      )}
-      
-      {filtered.length === 0 && (
-        <div className="text-center text-slate-500 py-8">
-          No symbols found matching your search.
+    <div className="panel">
+      <div className="panel-head"><span>{title}</span><span className="tag">{filtered.length} matches</span></div>
+      <div className="p-3">
+        <div className="flex items-center gap-2 border ln rounded-[3px] px-3 py-2 bg-black/30 mb-3">
+          <span className="acc mono">›</span>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="grep symbol  e.g. main, HAL_GPIO"
+            className="flex-1 bg-transparent outline-none mono text-[12px] fg placeholder:mut" />
         </div>
-      )}
+        <div className="overflow-x-auto">
+          <table className="w-full mono text-[12px]">
+            <thead>
+              <tr className="text-left mut border-b ln">
+                <th className="pb-2 font-medium">NAME</th><th className="pb-2 font-medium">SECTION</th>
+                <th className="pb-2 font-medium">ADDRESS</th><th className="pb-2 font-medium">SIZE</th><th className="pb-2 font-medium">TYPE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.slice(0, limit).map((s, i) => (
+                <tr key={i} className="sym-row border-b ln">
+                  <td className="py-1.5 acc">{s.name}</td>
+                  <td className="py-1.5 fg">{s.section}</td>
+                  <td className="py-1.5 mut">0x{s.value.toString(16)}</td>
+                  <td className="py-1.5 fg">{(s.size / 1024).toFixed(2)} KB</td>
+                  <td className="py-1.5 mut">{s.type}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length === 0 && <div className="text-center mut mono text-[12px] py-8">no symbols match the query</div>}
+        </div>
+        {filtered.length > limit && (
+          <button onClick={() => setLimit(limit + 50)} className="btn-hw mt-3">load +50 ({filtered.length - limit} left)</button>
+        )}
+      </div>
     </div>
   );
 }

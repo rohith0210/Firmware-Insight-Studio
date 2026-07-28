@@ -1,48 +1,35 @@
 export default function SectionTable({
-  sections,
-  onSectionClick,
-  selectedSection,
+  sections, onSectionClick, selectedSection,
 }: {
   sections: { name: string; type: string; addr: number; size: number }[];
-  onSectionClick?: (section: string | null) => void;
+  onSectionClick?: (s: string | null) => void;
   selectedSection?: string | null;
 }) {
-  const visible = sections.filter((s) => s.size > 0);
-  const maxSize = Math.max(...visible.map((s) => s.size), 1);
-
+  const visible = sections.filter(s => s.size > 0);
+  const max = Math.max(...visible.map(s => s.size), 1);
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">📐 Sections</h2>
-        {selectedSection && (
-          <button
-            onClick={() => onSectionClick?.(null)}
-            className="text-sm text-sky-400 hover:text-sky-300 transition"
-          >
-            Clear filter ✕
-          </button>
-        )}
+    <div className="panel">
+      <div className="panel-head">
+        <span>Sections</span>
+        <span className="flex items-center gap-3">
+          {selectedSection && (
+            <button onClick={() => onSectionClick?.(null)} className="acc2 mono text-[10px] uppercase tracking-widest hover:underline">clear ✕</button>
+          )}
+          <span className="tag">{visible.length} regions</span>
+        </span>
       </div>
-      <div className="space-y-2">
-        {visible.map((s) => {
-          const isSelected = selectedSection === s.name;
+      <div className="p-3 space-y-1">
+        {visible.map(s => {
+          const sel = selectedSection === s.name;
           return (
-            <div
-              key={s.name}
-              onClick={() => onSectionClick?.(isSelected ? null : s.name)}
-              className={`flex items-center gap-3 cursor-pointer rounded-lg p-2 transition
-                ${isSelected ? 'bg-sky-900/30 border border-sky-700/50' : 'hover:bg-slate-800/50 border border-transparent'}`}
-            >
-              <div className="w-32 text-sm font-mono truncate">{s.name}</div>
-              <div className="flex-1 bg-slate-800 rounded-full h-5 overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-sky-500 to-indigo-500"
-                  style={{ width: `${(s.size / maxSize) * 100}%` }}
-                />
+            <div key={s.name} onClick={() => onSectionClick?.(sel ? null : s.name)}
+              className={`sec-row ${sel ? "sel" : ""} flex items-center gap-3 rounded-[3px] px-3 py-1.5 cursor-pointer`}>
+              <div className="w-28 mono text-[12px] fg truncate">{s.name}</div>
+              <div className="w-20 mono text-[10px] mut hidden sm:block">0x{s.addr.toString(16)}</div>
+              <div className="flex-1 h-3 rounded-[2px]" style={{ background: "rgba(255,255,255,.04)" }}>
+                <div className="h-full rounded-[2px]" style={{ width: `${(s.size / max) * 100}%`, background: sel ? "var(--b)" : "var(--a)" }} />
               </div>
-              <div className="w-24 text-right text-sm font-mono text-slate-300">
-                {(s.size / 1024).toFixed(2)} KB
-              </div>
+              <div className="w-20 text-right mono text-[12px] fg">{(s.size / 1024).toFixed(2)} <span className="mut text-[10px]">KB</span></div>
             </div>
           );
         })}
