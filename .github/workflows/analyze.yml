@@ -1,0 +1,32 @@
+name: firmware-insight
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      elf_url: { description: "URL to an .elf to analyze", required: false }
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: deps
+        run: pip install -r backend/requirements.txt capstone
+      - name: fetch sample (if no build step)
+        if: ${{ github.event.inputs.elf_url != '' }}
+        run: curl -L "$ELF_URL" -o firmware.elf
+        env: { ELF_URL: "${{ github.event.inputs.elf_url }}" }
+      - name: report
+        # replace `firmware.elf` with your build artifact, e.g. build/app.elf
+        run: |
+          [ -f firmware.elf ] || { echo "no firmware.elf — wire this step to your build output"; exit 0; }
+          python backend/cli.py firmware.elf --md | tee report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: firmware-report, path: report.md }
+      - name: comment PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with: { header: firmware-insight, path: report.md }
