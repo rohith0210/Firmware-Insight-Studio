@@ -9,6 +9,7 @@ import SymbolExplorer from "./components/SymbolExplorer";
 import CallGraph from "./components/CallGraph";
 import DeadCode from "./components/DeadCode";
 import Compare from "./components/Compare";
+import Disassembler from "./components/Disassembler";
 import Uploader from "./components/Uploader";
 import Locked from "./components/Locked";
 
@@ -23,8 +24,8 @@ export type ParseResult = {
   call_graph: { nodes: Array<{ id: string; label: string; type: string }>; edges: Array<{ source: string; target: string; animated?: boolean }> };
   dead_code?: { items: any[]; reclaimable: number; referenced_count: number };
 };
-export type View = "overview" | "memory" | "sections" | "symbols" | "callgraph" | "linker" | "compare" | "deadcode" | "reports" | "settings";
-const TITLES: Record<View, string> = { overview: "Firmware Overview", memory: "Memory Analysis", sections: "Section Layout", symbols: "Symbol Table", callgraph: "Call Graph", linker: "Linker Script", compare: "Build Compare", deadcode: "Dead Code", reports: "Reports", settings: "Settings" };
+export type View = "overview" | "memory" | "sections" | "symbols" | "callgraph" | "debug" | "linker" | "compare" | "deadcode" | "reports" | "settings";
+const TITLES: Record<View, string> = { overview: "Firmware Overview", memory: "Memory Analysis", sections: "Section Layout", symbols: "Symbol Table", callgraph: "Call Graph", debug: "Disassembler", linker: "Linker Script", compare: "Build Compare", deadcode: "Dead Code", reports: "Reports", settings: "Settings" };
 
 async function parseFile(file: File): Promise<ParseResult> {
   const form = new FormData(); form.append("file", file);
@@ -48,14 +49,10 @@ export default function App() {
     setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setView("overview");
     try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
-  const handleCompare = async (file: File) => {
-    setError(null);
-    try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); }
-  };
+  const handleCompare = async (file: File) => { setError(null); try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); } };
   const download = (blob: Blob, name: string) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
   const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
   const exportCSV = () => { if (!result) return; const rows = [["Name", "Section", "Address", "SizeBytes", "Type"], ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])]; download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`); };
-
   const filteredSymbols = selectedSection ? result?.symbols.filter(s => s.section === selectedSection) || [] : result?.symbols || [];
 
   const renderView = () => {
@@ -66,6 +63,7 @@ export default function App() {
       case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
       case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
       case "callgraph": return result.call_graph.nodes.length > 0 ? <CallGraph data={result.call_graph} /> : <Locked name="Call Graph" note="No function symbols resolved in this binary." />;
+      case "debug": return <Disassembler result={result} />;
       case "deadcode": return <DeadCode data={result.dead_code} />;
       case "compare": return <Compare base={result} candidate={resultB} onLoad={handleCompare} onClear={() => setResultB(null)} />;
       case "reports": return <Reports onJSON={exportJSON} onCSV={exportCSV} />;
