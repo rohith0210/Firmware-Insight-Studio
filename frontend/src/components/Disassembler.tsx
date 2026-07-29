@@ -10,9 +10,9 @@ type Status = "idle" | "running" | "halted" | "returned";
 const REGSET = /\{([^}]+)\}/;
 const splitOps = (op: string) => op.replace(REGSET, m => m.replace(/,/g, "|")).split(",").map(s => s.trim()).filter(Boolean).flatMap(s => s.includes("|") ? s.split("|").map(x => x.trim()) : [s]);
 
-export default function Disassembler({ result }: { result: ParseResult }) {
+export default function Disassembler({ result, target }: { result: ParseResult; target?: { name: string; nonce: number } | null }) {
   const funcs = useMemo(() => result.symbols.filter(s => s.type === "STT_FUNC" && s.size > 0).map(s => s.name), [result]);
-  const [name, setName] = useState<string>(funcs.includes("main") ? "main" : funcs[0] || "");
+  const [name, setName] = useState<string>(target && target.name && funcs.includes(target.name) ? target.name : (funcs.includes("main") ? "main" : funcs[0] || ""));
   const [dis, setDis] = useState<Dis | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [bps, setBps] = useState<Set<number>>(new Set());
@@ -36,6 +36,7 @@ export default function Disassembler({ result }: { result: ParseResult }) {
   const stateRef = useRef({ dis, name, bps, pc, regs, status });
   stateRef.current = { dis, name, bps, pc, regs, status };
 
+  useEffect(() => { if (target && target.name && funcs.includes(target.name)) setName(target.name); }, [target?.nonce]);
   const word = result.elf_class === 64 ? 8 : 4;
   const pad = result.elf_class === 64 ? 12 : 8;
   const hex = (n: number) => (n >>> 0).toString(16).padStart(pad, "0");

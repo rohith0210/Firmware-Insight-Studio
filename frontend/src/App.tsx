@@ -55,6 +55,7 @@ export default function App() {
   const [accent, setAccent] = useState<"signal" | "phosphor">("signal");
   const [scanline, setScanline] = useState(true);
   const [deviceOverride, setDeviceOverride] = useState<string>("");
+  const [disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
   const [history, setHistory] = useState<Snap[]>(() => { try { return JSON.parse(localStorage.getItem(TL_KEY) || "[]"); } catch { return []; } });
   useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
   useEffect(() => { localStorage.setItem(TL_KEY, JSON.stringify(history)); }, [history]);
@@ -71,6 +72,8 @@ export default function App() {
 
   const handleUpload = async (file: File) => { setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setDeviceOverride(""); setView("overview"); try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
   const handleCompare = async (file: File) => { setError(null); try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); } };
+  const inspect = (n: string) => { setDisasmTarget({ name: n, nonce: Date.now() }); setView("debug"); };
+  const showSection = (sec: string) => { setSelectedSection(sec); setView("symbols"); };
   const download = (blob: Blob, name: string) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
   const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB, device: device?.name, history }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
   const exportCSV = () => { if (!result) return; const rows = [["Name", "Section", "Address", "SizeBytes", "Type"], ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])]; download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`); };
@@ -80,13 +83,13 @@ export default function App() {
     if (!result || !device) return <Uploader onUpload={handleUpload} loading={loading} />;
     switch (view) {
       case "overview": return <Overview result={result} device={device} />;
-      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} />}</div>;
+      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} result={result} device={device} onInspect={inspect} onShowSection={showSection} />}</div>;
       case "layout": return <LinkerScript result={result} device={device} />;
       case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
       case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
       case "objects": return <ObjectFiles result={result} />;
       case "callgraph": return result.call_graph.nodes.length > 0 ? <CallGraph data={result.call_graph} /> : <Locked name="Call Graph" note="No function symbols resolved in this binary." />;
-      case "debug": return <Disassembler result={result} />;
+      case "debug": return <Disassembler result={result} target={disasmTarget} />;
       case "isr": return <IsrAnalyzer result={result} />;
       case "periph": return <Peripherals result={result} />;
       case "config": return <BuildConfig result={result} />;
