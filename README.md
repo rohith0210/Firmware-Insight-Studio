@@ -146,25 +146,12 @@ That single capability is what moves the project from *"an ELF viewer"* to *"a f
 
 ---
 
-## Screenshots
+## Video
 
-<!--
-  Drop four PNGs into a docs/ folder with these exact names and they render below:
-      mkdir -p docs
-      cp overview.png treemap-inspector.png disassembler.png compare.png docs/
-  If you don't have them yet, DELETE this whole table (from the line above down to
-  the end of the second table) so GitHub doesn't show broken-image icons.
--->
 
-| Overview | Treemap + Inspector |
-|:---:|:---:|
-| <img src="docs/overview.png" width="100%" alt="Firmware overview"/> | <img src="docs/treemap-inspector.png" width="100%" alt="Memory treemap with inspector panel"/> |
+https://github.com/user-attachments/assets/e35a213b-ade4-4163-8e2d-bb46cbc3474d
 
-| Disassembler + simulator | Build Compare |
-|:---:|:---:|
-| <img src="docs/disassembler.png" width="100%" alt="Disassembler and stepping simulator"/> | <img src="docs/compare.png" width="100%" alt="Build comparison"/> |
 
----
 
 ## Roadmap
 
