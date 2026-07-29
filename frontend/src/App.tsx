@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Sidebar from "./components/Sidebar";
 import Ribbon from "./components/Ribbon";
 import Overview from "./components/Overview";
@@ -10,8 +10,10 @@ import CallGraph from "./components/CallGraph";
 import DeadCode from "./components/DeadCode";
 import Compare from "./components/Compare";
 import Disassembler from "./components/Disassembler";
+import LinkerScript from "./components/LinkerScript";
 import Uploader from "./components/Uploader";
 import Locked from "./components/Locked";
+import { detectDevice, DB, DB_ORDER } from "./utils/devices";
 
 export type ParseResult = {
   filename: string; arch: string; entry: string;
@@ -43,31 +45,35 @@ export default function App() {
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
   const [accent, setAccent] = useState<"signal" | "phosphor">("signal");
   const [scanline, setScanline] = useState(true);
+  const [deviceOverride, setDeviceOverride] = useState<string>("");
   useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
 
+  const device = useMemo(() => result ? (deviceOverride && DB[deviceOverride] ? DB[deviceOverride] : detectDevice(result)) : null, [result, deviceOverride]);
+
   const handleUpload = async (file: File) => {
-    setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setView("overview");
+    setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setDeviceOverride(""); setView("overview");
     try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
   const handleCompare = async (file: File) => { setError(null); try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); } };
   const download = (blob: Blob, name: string) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
-  const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
+  const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB, device: device?.name }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
   const exportCSV = () => { if (!result) return; const rows = [["Name", "Section", "Address", "SizeBytes", "Type"], ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])]; download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`); };
   const filteredSymbols = selectedSection ? result?.symbols.filter(s => s.section === selectedSection) || [] : result?.symbols || [];
 
   const renderView = () => {
-    if (!result) return <Uploader onUpload={handleUpload} loading={loading} />;
+    if (!result || !device) return <Uploader onUpload={handleUpload} loading={loading} />;
     switch (view) {
-      case "overview": return <Overview result={result} />;
-      case "memory": return <div className="space-y-5"><MemoryMap result={result} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} />}</div>;
+      case "overview": return <Overview result={result} device={device} />;
+      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} />}</div>;
       case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
       case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
       case "callgraph": return result.call_graph.nodes.length > 0 ? <CallGraph data={result.call_graph} /> : <Locked name="Call Graph" note="No function symbols resolved in this binary." />;
       case "debug": return <Disassembler result={result} />;
+      case "linker": return <LinkerScript result={result} device={device} />;
       case "deadcode": return <DeadCode data={result.dead_code} />;
       case "compare": return <Compare base={result} candidate={resultB} onLoad={handleCompare} onClear={() => setResultB(null)} />;
       case "reports": return <Reports onJSON={exportJSON} onCSV={exportCSV} />;
-      case "settings": return <Settings accent={accent} setAccent={setAccent} scanline={scanline} setScanline={setScanline} />;
+      case "settings": return <Settings accent={accent} setAccent={setAccent} scanline={scanline} setScanline={setScanline} device={device} override={deviceOverride} setOverride={setDeviceOverride} />;
       default: return <Locked name={TITLES[view]} note="Module wired into the workbench shell — analysis engine on the roadmap." />;
     }
   };
@@ -80,8 +86,9 @@ export default function App() {
         <Sidebar view={view} setView={setView} hasResult={!!result} />
         <div className="main">
           <Ribbon title={TITLES[view]} result={result} loading={loading} accent={accent}
+            device={device} override={deviceOverride} setOverride={setDeviceOverride}
             cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")}
-            onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); }} />
+            onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); }} />
           <div className="view" key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
             {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
             {renderView()}
@@ -92,19 +99,31 @@ export default function App() {
   );
 }
 
+function DevicePicker({ device, override, setOverride }: { device: any; override: string; setOverride: (s: string) => void }) {
+  return (
+    <span className="chip" title="detected target — click to override">
+      <span className="mut">target</span>
+      <select value={override} onChange={e => setOverride(e.target.value)} style={{ background: "transparent", border: 0, color: "var(--a)", fontFamily: "JetBrains Mono", fontSize: 11, outline: "none" }}>
+        <option value="">auto · {device?.name || "—"}</option>
+        {DB_ORDER.map(id => <option key={id} value={id}>{DB[id].name}</option>)}
+        <option value="generic">Cortex-M · generic</option>
+      </select>
+    </span>
+  );
+}
 function Reports({ onJSON, onCSV }: { onJSON: () => void; onCSV: () => void }) {
   return (
     <div className="panel">
       <div className="panel-head"><span>Reports</span><span className="tag">export analysis</span></div>
       <div className="p-5 grid sm:grid-cols-2 gap-4">
-        <button onClick={onJSON} className="btn-hw primary text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Full Analysis · JSON</span><span className="mono text-[10px] mut normal-case tracking-normal">sections · symbols · memory · graph · dead code</span></button>
+        <button onClick={onJSON} className="btn-hw primary text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Full Analysis · JSON</span><span className="mono text-[10px] mut normal-case tracking-normal">sections · symbols · memory · graph · dead code · device</span></button>
         <button onClick={onCSV} className="btn-hw text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Symbol Table · CSV</span><span className="mono text-[10px] mut normal-case tracking-normal">name · section · address · size</span></button>
       </div>
       <div className="px-5 pb-5"><Locked name="PDF Report" note="Printable datasheet generation is on the roadmap." compact /></div>
     </div>
   );
 }
-function Settings({ accent, setAccent, scanline, setScanline }: { accent: string; setAccent: (a: any) => void; scanline: boolean; setScanline: (b: boolean) => void }) {
+function Settings({ accent, setAccent, scanline, setScanline, device, override, setOverride }: { accent: string; setAccent: (a: any) => void; scanline: boolean; setScanline: (b: boolean) => void; device: any; override: string; setOverride: (s: string) => void }) {
   const Toggle = ({ on, set, label }: any) => (
     <button onClick={() => set(!on)} className="flex items-center justify-between w-full p-3 border ln rounded-[3px] hover:border-[var(--a-dim)] transition">
       <span className="mono text-[12px] fg">{label}</span>
@@ -120,6 +139,15 @@ function Settings({ accent, setAccent, scanline, setScanline }: { accent: string
           <span className="mono text-[12px] fg">Trace accent</span>
           <span className="mono text-[10px] px-2 py-1 rounded-[2px] acc">{accent === "signal" ? "TEAL / AMBER" : "PHOSPHOR"}</span>
         </button>
+        <label className="flex flex-col gap-2 p-3 border ln rounded-[3px] sm:col-span-2">
+          <span className="mono text-[12px] fg">Target device override</span>
+          <select value={override} onChange={e => setOverride(e.target.value)} className="selbar" style={{ width: "100%" }}>
+            <option value="">auto-detect · {device?.name || "—"}</option>
+            {DB_ORDER.map(id => <option key={id} value={id}>{DB[id].name}</option>)}
+            <option value="generic">Cortex-M · generic</option>
+          </select>
+          <span className="mono text-[10px] mut">auto-detect reads arch + .text/.data base addresses; override for exact FLASH/RAM capacity.</span>
+        </label>
       </div>
     </div>
   );

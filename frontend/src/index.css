@@ -24,7 +24,7 @@ body{margin:0;color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;b
 .nav-item .soon{margin-left:auto;font-family:'JetBrains Mono';font-size:8px;color:var(--mut);border:1px solid var(--line);border-radius:2px;padding:1px 4px;letter-spacing:.1em}
 .side .foot{margin-top:auto;padding:12px 14px;border-top:1px solid var(--line);font-family:'JetBrains Mono';font-size:9px;color:var(--mut);letter-spacing:.1em;display:flex;align-items:center;gap:7px}
 .main{min-width:0;display:flex;flex-direction:column}
-.ribbon{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--line);background:rgba(8,11,16,.82);backdrop-filter:blur(8px)}
+.ribbon{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--line);background:rgba(8,11,16,.82);backdrop-filter:blur(8px);flex-wrap:wrap}
 .ribbon .crumb{font-family:'Chakra Petch';font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:13px}
 .ribbon .crumb b{color:var(--a)} .ribbon .spacer{flex:1}
 .chip{font-family:'JetBrains Mono';font-size:11px;color:var(--mut);display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--line);border-radius:3px;background:rgba(0,0,0,.3)}
@@ -88,16 +88,21 @@ body{margin:0;color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;b
 .drop2{position:relative;border:1px dashed var(--line2);border-radius:4px;min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:repeating-linear-gradient(45deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px)}
 .drop2:hover{border-color:var(--a-dim)} .drop2.hot{border-color:var(--a);background:rgba(51,214,194,.05)}
 .tagpill{font-family:'JetBrains Mono';font-size:9px;letter-spacing:.1em;padding:1px 6px;border-radius:2px;border:1px solid var(--line)}
-/* ---- disassembler / register file / debug console ---- */
+/* ---- disassembler / simulator / register file / console ---- */
 .dbg{display:grid;grid-template-columns:1.45fr 1fr;gap:14px}
 @media(max-width:980px){.dbg{grid-template-columns:1fr}}
 .funcbar{display:flex;gap:8px;align-items:center}
 .funcbar input{flex:1;background:#0e151d;border:1px solid var(--line2);color:var(--fg);font-family:'JetBrains Mono';font-size:12px;border-radius:3px;padding:8px 10px;outline:none}
 .funcbar input:focus{border-color:var(--a-dim)}
+.runbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.runbar .spacer{flex:1}
+.runchip{display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono';font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:5px 10px;border:1px solid var(--line2);border-radius:3px}
 .funcmeta{display:flex;flex-wrap:wrap;gap:14px;padding:8px 12px;border:1px solid var(--line);border-radius:3px;background:var(--panel);font-family:'JetBrains Mono';font-size:11px}
 .disasm{font-family:'JetBrains Mono';font-size:12px;max-height:460px;overflow:auto;background:#080b10;border:1px solid var(--line);border-radius:3px}
-.dline{display:grid;grid-template-columns:20px 92px 96px 60px 1fr;gap:10px;align-items:center;padding:2px 10px;position:relative;animation:linein .34s ease both}
+.dline{display:grid;grid-template-columns:14px 18px 92px 92px 56px 1fr;gap:10px;align-items:center;padding:2px 10px;position:relative;animation:linein .34s ease both}
 .dline:hover{background:rgba(51,214,194,.05)}
+.dline.pc{background:rgba(51,214,194,.10);box-shadow:inset 3px 0 0 var(--a)}
+.dline .pcmk{color:var(--a);text-align:center;font-size:11px}
 .dline .bp{width:11px;height:11px;border-radius:50%;border:1px solid var(--line2);cursor:pointer;margin:auto;transition:all .15s}
 .dline .bp:hover{border-color:var(--danger)}
 .dline .bp.on{background:var(--danger);border-color:var(--danger);box-shadow:0 0 8px rgba(224,86,107,.6);animation:bpset .3s ease}
@@ -109,11 +114,12 @@ body{margin:0;color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;b
 @keyframes linein{from{opacity:0;transform:translateX(-5px)}to{opacity:1;transform:none}}
 .reggrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .regcell{border:1px solid var(--line);border-radius:3px;padding:6px 8px;background:var(--panel);position:relative}
-.regcell.t{border-color:var(--a-dim);background:rgba(51,214,194,.06);animation:regpulse .55s ease both}
+.regcell.t{border-color:var(--a-dim);background:rgba(51,214,194,.06)}
+.regcell.now{animation:regpulse .55s ease both;border-color:var(--a)}
 .regcell .rn{font-family:'JetBrains Mono';font-size:10px;color:var(--mut)} .regcell.t .rn{color:var(--a)}
 .regcell .rv{font-family:'JetBrains Mono';font-size:12px;color:var(--fg)} .regcell .rv.q{color:#3a4858}
 .regcell .rw{position:absolute;top:5px;right:6px;font-size:8px;font-weight:700}
-@keyframes regpulse{0%{box-shadow:0 0 0 0 rgba(51,214,194,.45)}100%{box-shadow:0 0 0 7px rgba(51,214,194,0)}}
+@keyframes regpulse{0%{box-shadow:0 0 0 0 rgba(51,214,194,.5)}100%{box-shadow:0 0 0 8px rgba(51,214,194,0)}}
 .console{background:#05080c;border:1px solid var(--line);border-radius:3px;font-family:'JetBrains Mono';font-size:12px;height:244px;display:flex;flex-direction:column}
 .console .log{flex:1;overflow:auto;padding:8px 10px;white-space:pre-wrap;line-height:1.5}
 .console .log .o{color:var(--fg)} .console .log .a{color:var(--a)} .console .log .b{color:var(--b)} .console .log .e{color:var(--danger)} .console .log .m{color:var(--mut)}
@@ -121,4 +127,11 @@ body{margin:0;color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;b
 .console .in .pr{color:var(--a)} .console .in input{flex:1;background:transparent;border:0;outline:none;color:var(--fg);font-family:'JetBrains Mono';font-size:12px}
 .cursor{display:inline-block;width:7px;height:13px;background:var(--a);animation:blink 1s steps(1) infinite;vertical-align:-2px}
 @keyframes blink{50%{opacity:0}}
+/* ---- linker script ---- */
+.ldrow{animation:rise .4s ease both}
+.ldbar{position:relative;height:22px;border:1px solid var(--line2);border-radius:3px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.02) 0 6px,transparent 6px 12px);display:flex;overflow:hidden}
+.ldplace{height:100%;display:flex;align-items:center;justify-content:center;border-right:1px solid rgba(0,0,0,.5);animation:grow .6s cubic-bezier(.2,.7,.2,1) both;overflow:hidden}
+.ldplace span{font-family:'JetBrains Mono';font-size:9px;color:#06121a;font-weight:700;white-space:nowrap}
+@keyframes grow{from{width:0 !important}}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media(max-width:860px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.side .brand,.side .foot,.nav-grp .lbl{display:none}.nav-grp{display:flex;padding:8px}.memmap{grid-template-columns:1fr}.spec{grid-template-columns:1fr}}
