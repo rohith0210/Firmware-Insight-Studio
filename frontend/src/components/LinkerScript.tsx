@@ -1,8 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
-import type { Device, Region } from "../utils/devices";
+import type { Device } from "../utils/devices";
 import { inRegion, fmt } from "../utils/devices";
+
 type LdRegion = { name: string; attrs: string; origin: number; length: number };
+type NRegion = { name: string; origin: number; length: number; kind: string; color: string; attrs: string; base: number; size: number };
+
 function parseSize(t: string): number { t = t.trim().replace(/;$/, ""); const m = t.match(/^([0-9]+(?:\.[0-9]+)?)([KkMm])?$/); if (m) { const n = parseFloat(m[1]); return m[2] ? n * (m[2].toLowerCase() === "k" ? 1024 : 1048576) : n; } if (/^0x[0-9a-f]+$/i.test(t)) return parseInt(t, 16); if (/^\d+$/.test(t)) return parseInt(t, 10); return 0; }
 function parseLD(text: string) {
   const regions: LdRegion[] = []; const placement: Record<string, string[]> = {};
@@ -12,42 +15,55 @@ function parseLD(text: string) {
   if (sec) { let cur = ""; for (const line of sec[1].split("\n")) { const o = line.match(/^\s*\.([\w.\-]+)\s*:/); if (o) cur = o[1]; const g = line.match(/>\s*(\w+)/); if (g && cur) (placement[g[1]] = placement[g[1]] || []).push(cur); } }
   return { regions, placement };
 }
-function ticks(origin: number, length: number) { return [0, 0.25, 0.5, 0.75, 1].map(f => ({ f, addr: origin + Math.round(length * f) })); }
+const ticks = (origin: number, length: number) => [0, 0.25, 0.5, 0.75, 1].map(f => ({ f, addr: origin + Math.round(length * f) }));
+const tickShift = (f: number) => (f <= 0 ? "0%" : f >= 1 ? "-100%" : "-50%");
 
 function Column({ rg, secs, placed, edit, onEdit, onPick }: any) {
-  const placedNames: string[] = placed || [];
-  const inSecs = secs.filter((s: any) => s.size > 0 && inRegion(rg, s.addr)).sort((a: any, b: any) => a.addr - b.addr);
-  const isFlash = /(r|x)/.test(rg.attrs || "") && !/(w)/.test(rg.attrs || "") || rg.kind === "flash" || rg.kind === "xip";
-  const isRam = rg.kind === "ram" || rg.kind === "ccm" || (rg.attrs && /w/.test(rg.attrs) && !/x/.test(rg.attrs));
-  const stackSize = isRam ? Math.min(rg.length, 2048) : 0;
-  const heapSize = isRam ? Math.min(rg.length, 1024) : 0;
-  const vecSize = isFlash ? Math.min(rg.length, 0x400) : 0;
-  // build positioned blocks (offset fraction within region)
-  const blocks: any[] = [];
-  if (vecSize > 0) blocks.push({ name: "VECTOR TABLE", off: 0, size: vecSize, color: "#e0566b", ann: true });
-  inSecs.forEach((s: any) => { const off = (s.addr >>> 0) - rg.origin; if (off >= 0 && off + s.size <= rg.length) blocks.push({ name: s.name, off, size: s.size, color: rg.color, sec: s }); });
-  if (heapSize > 0) { const bssEnd = inSecs.filter((s: any) => s.name === ".bss").reduce((m: number, s: any) => Math.max(m, (s.addr >>> 0) - rg.origin + s.size), 0); blocks.push({ name: "HEAP ↑", off: bssEnd, size: heapSize, color: "#9a6c1c", ann: true }); }
-  if (stackSize > 0) blocks.push({ name: "↓ STACK (_estack)", off: rg.length - stackSize, size: stackSize, color: "#1c8a7e", ann: true });
-  blocks.sort((a, b) => a.off - b.off);
+  const region = rg as NRegion;
+  const isFlash = region.kind === "flash" || region.kind === "xip";
+  const isRam = region.kind === "ram" || region.kind === "ccm";
+  // real sections at their true offsets
+  const occ = secs.filter((s: any) => s.size > 0 && inRegion(region, s.addr))
+    .map((s: any) => ({ off: (s.addr >>> 0) - region.origin, size: s.size, name: s.name, color: region.color, sec: s }))
+    .filter((b: any) => b.off >= 0 && b.off + b.size <= region.length)
+    .sort((a: any, b: any) => a.off - b.off);
+  // free gaps between/around real sections -> canonical annotations live ONLY here (never overlap a real section)
+  const blocks: any[] = occ.map(o => ({ ...o, ann: false }));
+  const gaps: { off: number; size: number }[] = [];
+  let cursor = 0;
+  for (const o of occ) { if (o.off > cursor) gaps.push({ off: cursor, size: o.off - cursor }); cursor = Math.max(cursor, o.off + o.size); }
+  if (cursor < region.length) gaps.push({ off: cursor, size: region.length - cursor });
+  for (const g of gaps) {
+    if (g.size < 64) { blocks.push({ ...g, name: "", color: "transparent", ann: false, free: true }); continue; }
+    const atStart = g.off === 0, atEnd = g.off + g.size >= region.length;
+    if (isFlash && atStart) blocks.push({ ...g, name: "VECTOR TABLE", color: "#e0566b", ann: true });
+    else if (isRam && atEnd) blocks.push({ ...g, name: "↓ STACK (_estack)", color: "#1c8a7e", ann: true });
+    else if (isRam && !atStart && !atEnd) blocks.push({ ...g, name: "HEAP ↑", color: "#9a6c1c", ann: true });
+    else blocks.push({ ...g, name: "", color: "transparent", ann: false, free: true });
+  }
+  blocks.sort((a: any, b: any) => a.off - b.off);
+
   return (
     <div className="ldcol">
       <div className="ldcol-head">
-        <span className="fg">{rg.name}</span>
-        <span className="mut mono text-[10px]">0x{(rg.origin >>> 0).toString(16)}</span>
-        <label className="ldedit" title="region length (KB)">{edit ? <><input type="number" min={1} value={Math.round(rg.length / 1024)} onChange={e => onEdit(Math.max(1, parseInt(e.target.value) || 1) * 1024)} /> <span>KB</span></> : <span className="mut">{fmt(rg.length)}</span>}</label>
+        <span className="fg">{region.name}</span>
+        <span className="mut mono text-[10px]">0x{(region.origin >>> 0).toString(16)}</span>
+        <label className="ldedit" title="region length (KB)">{edit ? <><input type="number" min={1} value={Math.round(region.length / 1024)} onChange={e => onEdit(Math.max(1, parseInt(e.target.value) || 1) * 1024)} /> <span>KB</span></> : <span className="mut">{fmt(region.length)}</span>}</label>
       </div>
       <div className="ldaxis">
         <div className="ldruler">
-          {ticks(rg.origin, rg.length).map((t, i) => <div key={i} className="ldtick" style={{ top: `${t.f * 100}%` }}><span>0x{(t.addr >>> 0).toString(16).padStart(8, "0")}</span></div>)}
+          {ticks(region.origin, region.length).map((t, i) => (
+            <div key={i} className="ldtick" style={{ top: `${t.f * 100}%`, transform: `translateY(${tickShift(t.f)})` }}><span>0x{(t.addr >>> 0).toString(16).padStart(8, "0")}</span></div>
+          ))}
           <div className="ldbar2">
-            {blocks.map((b, i) => { const top = (b.off / rg.length) * 100; const h = Math.max(0.6, (b.size / rg.length) * 100); return (
-              <div key={i} className={`ldblk ${b.ann ? "ann" : ""}`} style={{ top: `${top}%`, height: `${h}%`, background: b.color }} title={`${b.name} · 0x${(rg.origin + b.off).toString(16)} · ${(b.size / 1024).toFixed(2)} KB`} onClick={() => b.sec && onPick(b.sec)}>
-                {h > 3 && <span>{b.name}</span>}
+            {blocks.map((b, i) => { const top = (b.off / region.length) * 100; const h = Math.max(0.5, (b.size / region.length) * 100); return (
+              <div key={i} className={`ldblk ${b.ann ? "ann" : ""} ${b.free ? "free" : ""}`} style={{ top: `${top}%`, height: `${h}%`, background: b.free ? undefined : b.color }} title={b.sec ? `${b.name} · 0x${(region.origin + b.off).toString(16)} · ${(b.size / 1024).toFixed(2)} KB` : (b.name || "free")} onClick={() => b.sec && onPick(b.sec)}>
+                {h > 3 && b.name && <span>{b.name}</span>}
               </div>); })}
           </div>
         </div>
       </div>
-      <div className="mut mono text-[9px] mt-1">{placedNames.length ? `sections: ${placedNames.slice(0, 6).join(", ")}${placedNames.length > 6 ? "…" : ""}` : (isFlash ? "code / rodata" : isRam ? "data / bss / heap / stack" : "")}</div>
+      <div className="mut mono text-[9px] mt-2 truncate">{placed.length ? `sections: ${placed.slice(0, 7).join(", ")}${placed.length > 7 ? "…" : ""}` : (isFlash ? "code / rodata" : isRam ? "data / bss / heap / stack" : "")}</div>
     </div>
   );
 }
@@ -60,12 +76,16 @@ export default function LinkerScript({ result, device }: { result: ParseResult; 
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const ref = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => (text ? parseLD(text) : null), [text]);
-  const base = parsed ? parsed.regions.map(rg => ({ name: rg.name, origin: rg.origin, length: rg.length, kind: (/(r|x)/.test(rg.attrs) && !/w/.test(rg.attrs)) ? "flash" : "ram", color: (/(r|x)/.test(rg.attrs) && !/w/.test(rg.attrs)) ? "#33d6c2" : "#f0a830", attrs: rg.attrs }))
+
+  const rawBase: Omit<NRegion, "base" | "size">[] = parsed
+    ? parsed.regions.map(rg => ({ name: rg.name, origin: rg.origin, length: rg.length, kind: (/(r|x)/.test(rg.attrs) && !/w/.test(rg.attrs)) ? "flash" : "ram", color: (/(r|x)/.test(rg.attrs) && !/w/.test(rg.attrs)) ? "#33d6c2" : "#f0a830", attrs: rg.attrs }))
     : device.regions.map(rg => ({ name: rg.name, origin: rg.base, length: rg.size, kind: rg.kind, color: rg.color, attrs: "" }));
-  const regions = base.map(rg => ({ ...rg, length: overrides[rg.name] || rg.length }));
-  const placement = parsed?.placement || Object.fromEntries(device.regions.map(rg => [rg.name, result.sections.filter(s => s.size > 0 && inRegion(rg, s.addr)).map(s => s.name.replace(/^\./, ""))]));
+  const regions: NRegion[] = rawBase.map(rg => { const L = overrides[rg.name] || rg.length; return { ...rg, length: L, base: rg.origin, size: L }; });
+  const placement = parsed?.placement || Object.fromEntries(regions.map(rg => [rg.name, result.sections.filter(s => s.size > 0 && inRegion(rg, s.addr)).map(s => s.name.replace(/^\./, ""))]));
+
   const load = (f: File) => { setName(f.name); f.text().then(t => { setText(t); setOverrides({}); }); };
   const onDrop = (e: React.DragEvent) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) load(f); };
+
   return (
     <div className="space-y-4">
       <div className="panel">
@@ -81,8 +101,8 @@ export default function LinkerScript({ result, device }: { result: ParseResult; 
       <div className="panel">
         <div className="panel-head"><span>{parsed ? "Declared Regions" : "Device Memory Map"}</span><span className="tag">vertical axis = address · click a section</span></div>
         <div className="p-4">
-          <div className="ldgrid">{regions.map(rg => <Column key={rg.name} rg={rg} secs={result.sections} placed={placement[rg.name]} edit={edit} onEdit={(v: number) => setOverrides(o => ({ ...o, [rg.name]: v }))} onPick={setPick} />)}</div>
-          <div className="mut mono text-[9px] mt-3 leading-relaxed">annotations are the canonical Cortex-M model: vector table pinned at the flash origin, stack at the top of RAM growing down to <span className="acc">_estack</span>, heap after <span className="acc">.bss</span>. edit a region's KB to see the layout rescale live — the playground.</div>
+          <div className="ldgrid">{regions.map(rg => <Column key={rg.name} rg={rg} secs={result.sections} placed={placement[rg.name] || []} edit={edit} onEdit={(v: number) => setOverrides(o => ({ ...o, [rg.name]: v }))} onPick={setPick} />)}</div>
+          <div className="mut mono text-[9px] mt-3 leading-relaxed">sections sit at their real addresses; the canonical Cortex-M markers (vector table, heap, stack→<span className="acc">_estack</span>) only fill genuinely empty gaps, so they never cover real code. edit a region's KB to rescale live.</div>
         </div>
       </div>
       {pick && (
