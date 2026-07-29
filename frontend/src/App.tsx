@@ -1,114 +1,128 @@
-import { useState } from "react";
-import Uploader from "./components/Uploader";
-import Dashboard from "./components/Dashboard";
+import { useState, useEffect } from "react";
+import Sidebar from "./components/Sidebar";
+import Ribbon from "./components/Ribbon";
+import Overview from "./components/Overview";
+import MemoryMap from "./components/MemoryMap";
 import MemoryTreemap from "./components/MemoryTreemap";
 import SectionTable from "./components/SectionTable";
 import SymbolExplorer from "./components/SymbolExplorer";
 import CallGraph from "./components/CallGraph";
+import DeadCode from "./components/DeadCode";
+import Compare from "./components/Compare";
+import Uploader from "./components/Uploader";
+import Locked from "./components/Locked";
 
 export type ParseResult = {
   filename: string; arch: string; entry: string;
+  elf_class?: number; file_size?: number; checksum?: string; toolchain?: string;
+  num_sections?: number; num_symbols?: number; largest?: { name: string; size: number };
   sections: { name: string; type: string; addr: number; size: number; flags: number }[];
   symbols: { name: string; value: number; size: number; type: string; bind: string; section: string }[];
   summary: Record<string, number>;
   treemap_data: { name: string; size: number; children: { name: string; size: number }[] }[];
-  call_graph: {
-    nodes: Array<{ id: string; label: string; x: number; y: number; kind: string }>;
-    edges: Array<{ source: string; target: string; animated?: boolean }>;
-    mode?: string;
-  };
+  call_graph: { nodes: Array<{ id: string; label: string; type: string }>; edges: Array<{ source: string; target: string; animated?: boolean }> };
+  dead_code?: { items: any[]; reclaimable: number; referenced_count: number };
 };
+export type View = "overview" | "memory" | "sections" | "symbols" | "callgraph" | "linker" | "compare" | "deadcode" | "reports" | "settings";
+const TITLES: Record<View, string> = { overview: "Firmware Overview", memory: "Memory Analysis", sections: "Section Layout", symbols: "Symbol Table", callgraph: "Call Graph", linker: "Linker Script", compare: "Build Compare", deadcode: "Dead Code", reports: "Reports", settings: "Settings" };
 
-const Chip = () => (
-  <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.4" className="acc">
-    <rect x="6" y="6" width="12" height="12" rx="1.5" />
-    <rect x="9.5" y="9.5" width="5" height="5" rx=".5" opacity=".6" />
-    <path d="M9 6V3 M12 6V3 M15 6V3 M9 18v3 M12 18v3 M15 18v3 M6 9H3 M6 12H3 M6 15H3 M18 9h3 M18 12h3 M18 15h3" />
-  </svg>
-);
+async function parseFile(file: File): Promise<ParseResult> {
+  const form = new FormData(); form.append("file", file);
+  const res = await fetch("http://localhost:8000/api/upload", { method: "POST", body: form });
+  if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
+  return res.json();
+}
 
 export default function App() {
   const [result, setResult] = useState<ParseResult | null>(null);
+  const [resultB, setResultB] = useState<ParseResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<View>("overview");
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
+  const [accent, setAccent] = useState<"signal" | "phosphor">("signal");
+  const [scanline, setScanline] = useState(true);
+  useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
 
   const handleUpload = async (file: File) => {
-    setLoading(true); setError(null); setSelectedSection(null);
-    try {
-      const form = new FormData(); form.append("file", file);
-      const res = await fetch("http://localhost:8000/api/upload", { method: "POST", body: form });
-      if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
-      setResult(await res.json());
-    } catch (e: any) { setError(e.message); }
-    finally { setLoading(false); }
+    setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setView("overview");
+    try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
+  const handleCompare = async (file: File) => {
+    setError(null);
+    try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); }
+  };
+  const download = (blob: Blob, name: string) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
+  const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
+  const exportCSV = () => { if (!result) return; const rows = [["Name", "Section", "Address", "SizeBytes", "Type"], ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])]; download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`); };
 
-  const download = (blob: Blob, name: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = name; a.click();
-    URL.revokeObjectURL(url);
-  };
-  const exportJSON = () => result && download(new Blob([JSON.stringify(result, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
-  const exportCSV = () => {
-    if (!result) return;
-    const rows = [["Name", "Section", "Address", "SizeBytes", "Type"],
-      ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])];
-    download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`);
-  };
+  const filteredSymbols = selectedSection ? result?.symbols.filter(s => s.section === selectedSection) || [] : result?.symbols || [];
 
-  const filteredSymbols = selectedSection
-    ? result?.symbols.filter(s => s.section === selectedSection) || []
-    : result?.symbols || [];
-  const secNames = (result?.sections || []).filter(s => s.size > 0).map(s => s.name);
+  const renderView = () => {
+    if (!result) return <Uploader onUpload={handleUpload} loading={loading} />;
+    switch (view) {
+      case "overview": return <Overview result={result} />;
+      case "memory": return <div className="space-y-5"><MemoryMap result={result} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} />}</div>;
+      case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
+      case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
+      case "callgraph": return result.call_graph.nodes.length > 0 ? <CallGraph data={result.call_graph} /> : <Locked name="Call Graph" note="No function symbols resolved in this binary." />;
+      case "deadcode": return <DeadCode data={result.dead_code} />;
+      case "compare": return <Compare base={result} candidate={resultB} onLoad={handleCompare} onClear={() => setResultB(null)} />;
+      case "reports": return <Reports onJSON={exportJSON} onCSV={exportCSV} />;
+      case "settings": return <Settings accent={accent} setAccent={setAccent} scanline={scanline} setScanline={setScanline} />;
+      default: return <Locked name={TITLES[view]} note="Module wired into the workbench shell — analysis engine on the roadmap." />;
+    }
+  };
 
   return (
     <>
       <div className="app-bg" />
-      <div className="scanline" />
-      <div className="content max-w-6xl mx-auto px-5 py-7">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Chip />
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-display text-3xl font-bold tracking-tight fg">FIRMWARE INSIGHT<span className="acc">_</span></h1>
-                <span className="flex items-center gap-1.5 mono text-[10px] mut uppercase tracking-widest">
-                  <span className={`dot ${loading ? "busy" : ""}`} />{loading ? "analyzing" : "ready"}
-                </span>
-              </div>
-              <p className="mono text-[11px] mut uppercase tracking-[.18em] mt-0.5">ELF // memory analyzer · v1.0</p>
-            </div>
+      {scanline && <div className="scanline" />}
+      <div className="shell">
+        <Sidebar view={view} setView={setView} hasResult={!!result} />
+        <div className="main">
+          <Ribbon title={TITLES[view]} result={result} loading={loading} accent={accent}
+            cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")}
+            onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); }} />
+          <div className="view" key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
+            {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
+            {renderView()}
           </div>
-          <div className="flex items-center gap-2">
-            {result && (
-              <div className="mono text-[11px] mut hidden md:flex items-center gap-3 px-3 py-2 border ln rounded-[3px] bg-black/30">
-                <span className="fg">{result.filename}</span><span className="acc">{result.arch}</span><span>{result.symbols.length} sym</span>
-              </div>
-            )}
-            {result && <button onClick={exportCSV} className="btn-hw">CSV</button>}
-            {result && <button onClick={exportJSON} className="btn-hw primary">Export JSON</button>}
-          </div>
-        </header>
-
-        {result && secNames.length > 0 && (
-          <div className="ticker mt-4"><div className="ticker-track">{[...secNames, ...secNames].map((n, i) => <span key={i}><b>//</b>{n}</span>)}</div></div>
-        )}
-
-        <div className="mt-5"><Uploader onUpload={handleUpload} loading={loading} loadedName={result?.filename ?? null} /></div>
-
-        {error && <div className="mt-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
-
-        {result && (
-          <div className="mt-6 space-y-5 reveal">
-            <Dashboard result={result} />
-            {result.treemap_data && result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} />}
-            {result.call_graph && result.call_graph.nodes.length > 0 && <CallGraph data={result.call_graph} />}
-            <SectionTable sections={result.sections} onSectionClick={setSelectedSection} selectedSection={selectedSection} />
-            <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Explorer"} />
-          </div>
-        )}
+        </div>
       </div>
     </>
+  );
+}
+
+function Reports({ onJSON, onCSV }: { onJSON: () => void; onCSV: () => void }) {
+  return (
+    <div className="panel">
+      <div className="panel-head"><span>Reports</span><span className="tag">export analysis</span></div>
+      <div className="p-5 grid sm:grid-cols-2 gap-4">
+        <button onClick={onJSON} className="btn-hw primary text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Full Analysis · JSON</span><span className="mono text-[10px] mut normal-case tracking-normal">sections · symbols · memory · graph · dead code</span></button>
+        <button onClick={onCSV} className="btn-hw text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Symbol Table · CSV</span><span className="mono text-[10px] mut normal-case tracking-normal">name · section · address · size</span></button>
+      </div>
+      <div className="px-5 pb-5"><Locked name="PDF Report" note="Printable datasheet generation is on the roadmap." compact /></div>
+    </div>
+  );
+}
+function Settings({ accent, setAccent, scanline, setScanline }: { accent: string; setAccent: (a: any) => void; scanline: boolean; setScanline: (b: boolean) => void }) {
+  const Toggle = ({ on, set, label }: any) => (
+    <button onClick={() => set(!on)} className="flex items-center justify-between w-full p-3 border ln rounded-[3px] hover:border-[var(--a-dim)] transition">
+      <span className="mono text-[12px] fg">{label}</span>
+      <span className="mono text-[10px] px-2 py-1 rounded-[2px]" style={{ background: on ? "rgba(51,214,194,.15)" : "rgba(255,255,255,.04)", color: on ? "var(--a)" : "var(--mut)" }}>{on ? "ON" : "OFF"}</span>
+    </button>
+  );
+  return (
+    <div className="panel">
+      <div className="panel-head"><span>Settings</span><span className="tag">workbench</span></div>
+      <div className="p-5 grid sm:grid-cols-2 gap-3 max-w-2xl">
+        <Toggle on={scanline} set={setScanline} label="CRT scanline" />
+        <button onClick={() => setAccent(accent === "signal" ? "phosphor" : "signal")} className="flex items-center justify-between w-full p-3 border ln rounded-[3px] hover:border-[var(--a-dim)] transition">
+          <span className="mono text-[12px] fg">Trace accent</span>
+          <span className="mono text-[10px] px-2 py-1 rounded-[2px] acc">{accent === "signal" ? "TEAL / AMBER" : "PHOSPHOR"}</span>
+        </button>
+      </div>
+    </div>
   );
 }
