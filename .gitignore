@@ -1,22 +1,26 @@
-# Python
-venv/
+# dependencies — match anywhere in the tree
+node_modules/
 __pycache__/
 *.pyc
+*.pyo
 
-# Node
-frontend/node_modules/
+# python env
+venv/
+.venv/
+env/
+
+# build output
 frontend/dist/
-
-# IDE
-.vscode/
-*.swp
-.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Uploaded files
+*.o
 *.elf
+*.axf
 *.bin
-*.map
+
+# editor / os
+.vscode/
+.idea/
+.DS_Store
+
+# env / secrets
+.env
+.env.*
