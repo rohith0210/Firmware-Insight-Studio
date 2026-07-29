@@ -1,5 +1,5 @@
 fastapi==0.115.0
-uvicorn==0.30.6
-python-multipart==0.0.9
+uvicorn[standard]==0.30.6
 pyelftools==0.31
-networkx==3.3
+python-multipart==0.0.9
+capstone==5.0.1

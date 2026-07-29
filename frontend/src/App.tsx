@@ -3,7 +3,7 @@ import Sidebar from "./components/Sidebar";
 import Ribbon from "./components/Ribbon";
 import Overview from "./components/Overview";
 import MemoryMap from "./components/MemoryMap";
-import MemoryTreemap from "./components/MemoryTreemap";
+import MemoryTreemap, { type LR } from "./components/MemoryTreemap";
 import LinkerScript from "./components/LinkerScript";
 import SectionTable from "./components/SectionTable";
 import SymbolExplorer from "./components/SymbolExplorer";
@@ -20,6 +20,7 @@ import Timeline, { type Snap } from "./components/Timeline";
 import Fragmentation from "./components/Fragmentation";
 import Uploader from "./components/Uploader";
 import Locked from "./components/Locked";
+import InspectorPanel from "./components/InspectorPanel";
 import { detectDevice, DB, DB_ORDER } from "./utils/devices";
 
 export type ParseResult = {
@@ -56,13 +57,13 @@ export default function App() {
   const [scanline, setScanline] = useState(true);
   const [deviceOverride, setDeviceOverride] = useState<string>("");
   const [disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<LR | null>(null);
   const [history, setHistory] = useState<Snap[]>(() => { try { return JSON.parse(localStorage.getItem(TL_KEY) || "[]"); } catch { return []; } });
+
   useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
   useEffect(() => { localStorage.setItem(TL_KEY, JSON.stringify(history)); }, [history]);
-
   const device = useMemo(() => result ? (deviceOverride && DB[deviceOverride] ? DB[deviceOverride] : detectDevice(result)) : null, [result, deviceOverride]);
 
-  // timeline: record a snapshot whenever a new base binary lands
   useEffect(() => {
     if (!result) return;
     const s = result.summary || {};
@@ -70,7 +71,7 @@ export default function App() {
     setHistory(h => (h[h.length - 1]?.checksum === snap.checksum ? h : [...h, snap].slice(-40)));
   }, [result?.checksum]);
 
-  const handleUpload = async (file: File) => { setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setDeviceOverride(""); setView("overview"); try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
+  const handleUpload = async (file: File) => { setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); setView("overview"); try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
   const handleCompare = async (file: File) => { setError(null); try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); } };
   const inspect = (n: string) => { setDisasmTarget({ name: n, nonce: Date.now() }); setView("debug"); };
   const showSection = (sec: string) => { setSelectedSection(sec); setView("symbols"); };
@@ -83,7 +84,7 @@ export default function App() {
     if (!result || !device) return <Uploader onUpload={handleUpload} loading={loading} />;
     switch (view) {
       case "overview": return <Overview result={result} device={device} />;
-      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} result={result} device={device} onInspect={inspect} onShowSection={showSection} />}</div>;
+      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} onSelect={setSelectedSymbol} selectedId={selectedSymbol?.id} />}</div>;
       case "layout": return <LinkerScript result={result} device={device} />;
       case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
       case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
@@ -108,13 +109,18 @@ export default function App() {
     <>
       <div className="app-bg" />
       {scanline && <div className="scanline" />}
-      <div className="shell">
+      <div className="shell" style={{ height: "100vh", overflow: "hidden" }}>
         <Sidebar view={view} setView={setView} hasResult={!!result} />
-        <div className="main">
-          <Ribbon title={TITLES[view]} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); }} />
-          <div className="view" key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
-            {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
-            {renderView()}
+        <div className="main" style={{ overflow: "hidden" }}>
+          <Ribbon title={TITLES[view]} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} />
+          <div className="flex flex-1" style={{ minHeight: 0 }}>
+            <div className="view flex-1 overflow-auto" style={{ minWidth: 0 }} key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
+              {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
+              {renderView()}
+            </div>
+            {selectedSymbol && result && device && (
+              <InspectorPanel symbol={selectedSymbol} result={result} device={device} onClose={() => setSelectedSymbol(null)} onSelect={setSelectedSymbol} onDisassemble={inspect} onShowSection={showSection} />
+            )}
           </div>
         </div>
       </div>

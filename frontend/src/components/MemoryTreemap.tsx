@@ -1,94 +1,126 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { inRegion } from "../utils/devices";
 
-/* ---- squarified treemap (Bruls et al.), zero deps ---- */
 type R = { x: number; y: number; w: number; h: number };
 function squarify(vals: number[], rect: R): R[] {
   const out: R[] = [];
-  const total = vals.reduce((a, b) => a + b, 0);
+  const total = vals.reduce((a: number, b: number) => a + b, 0);
   if (total <= 0 || rect.w <= 0 || rect.h <= 0) return vals.map(() => ({ x: rect.x, y: rect.y, w: 0, h: 0 }));
   const area = rect.w * rect.h;
-  const q = vals.map((v, i) => ({ v: (v / total) * area, i })).filter(o => o.v > 0);
-  let r = { ...rect }; let rowV: number[] = [], rowI: { v: number; i: number }[] = [];
+  const q = vals.map((v: number, i: number) => ({ v: (v / total) * area, i })).filter(o => o.v > 0);
+  let r = { ...rect };
+  let rowV: number[] = [], rowI: { v: number; i: number }[] = [];
   const short = (rr: R) => Math.min(rr.w, rr.h);
-  const worst = (row: number[], len: number) => { const s = row.reduce((a, b) => a + b, 0); if (s <= 0) return Infinity; const mx = Math.max(...row), mn = Math.min(...row); return Math.max((len * len * mx) / (s * s), (s * s) / (len * len * mn)); };
-  const place = (rv: number[], ri: { v: number; i: number }[]) => { const s = rv.reduce((a, b) => a + b, 0); if (r.w <= 0 || r.h <= 0) return; if (r.w <= r.h) { const t = s / r.w; let cx = r.x; for (const it of ri) { const iw = it.v / t; out[it.i] = { x: cx, y: r.y, w: iw, h: t }; cx += iw; } r = { x: r.x, y: r.y + t, w: r.w, h: r.h - t }; } else { const t = s / r.h; let cy = r.y; for (const it of ri) { const ih = it.v / t; out[it.i] = { x: r.x, y: cy, w: t, h: ih }; cy += ih; } r = { x: r.x + t, y: r.y, w: r.w - t, h: r.h }; } };
+  const worst = (row: number[], len: number) => {
+    const s = row.reduce((a: number, b: number) => a + b, 0);
+    if (s <= 0) return Infinity;
+    const mx = Math.max(...row), mn = Math.min(...row);
+    return Math.max((len * len * mx) / (s * s), (s * s) / (len * len * mn));
+  };
+  const place = (rv: number[], ri: { v: number; i: number }[]) => {
+    const s = rv.reduce((a: number, b: number) => a + b, 0);
+    if (r.w <= 0 || r.h <= 0) return;
+    if (r.w <= r.h) {
+      const t = s / r.w; let cx = r.x;
+      for (const it of ri) { const iw = it.v / t; out[it.i] = { x: cx, y: r.y, w: iw, h: t }; cx += iw; }
+      r = { x: r.x, y: r.y + t, w: r.w, h: r.h - t };
+    } else {
+      const t = s / r.h; let cy = r.y;
+      for (const it of ri) { const ih = it.v / t; out[it.i] = { x: r.x, y: cy, w: t, h: ih }; cy += ih; }
+      r = { x: r.x + t, y: r.y, w: r.w - t, h: r.h };
+    }
+  };
   let i = 0;
-  while (i < q.length) { const c = q[i]; const w = short(r); if (w <= 0) break; if (!rowV.length || worst([...rowV, c.v], w) <= worst(rowV, w)) { rowV.push(c.v); rowI.push(c); i++; } else { place(rowV, rowI); rowV = []; rowI = []; } }
+  while (i < q.length) {
+    const c = q[i]; const w = short(r); if (w <= 0) break;
+    if (!rowV.length || worst([...rowV, c.v], w) <= worst(rowV, w)) { rowV.push(c.v); rowI.push(c); i++; }
+    else { place(rowV, rowI); rowV = []; rowI = []; }
+  }
   if (rowV.length) place(rowV, rowI);
   return vals.map((_, k) => out[k] || { x: rect.x, y: rect.y, w: 0, h: 0 });
 }
 
-/* ---- calmer heat ramp + readable text contrast ---- */
 const STOPS = ["#3f8f7a", "#86a85a", "#c7b24c", "#d68f3e", "#cb5d4d"].map(c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]);
 const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
-function heat(t: number) { t = Math.max(0, Math.min(1, t)); const x = t * (STOPS.length - 1); const i = Math.floor(x); const f = x - i; const a = STOPS[i], b = STOPS[Math.min(STOPS.length - 1, i + 1)]; const rgb = [mix(a[0], b[0], f), mix(a[1], b[1], f), mix(a[2], b[2], f)]; const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]; return { fill: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, dark: lum > 138 }; }
+function heat(t: number) {
+  t = Math.max(0, Math.min(1, t));
+  const x = t * (STOPS.length - 1); const i = Math.floor(x); const f = x - i;
+  const a = STOPS[i], b = STOPS[Math.min(STOPS.length - 1, i + 1)];
+  const rgb = [mix(a[0], b[0], f), mix(a[1], b[1], f), mix(a[2], b[2], f)];
+  const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return { fill: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, dark: lum > 138 };
+}
 const elide = (s: string, max: number) => (max < 2 ? "" : s.length > max ? s.slice(0, Math.max(1, max - 1)) + "…" : s);
-const modOf = (n: string) => { const x = n.split("@")[0]; if (x.startsWith("HAL_") || x.startsWith("LL_")) { const p = x.split("_"); return (p[0] + "_" + (p[1] || "")).toUpperCase(); } if (x.startsWith("__") || x.startsWith("_Z")) return "runtime / c++"; const p = x.split("_"); return (p[0] || "app").toUpperCase() || "app"; };
 
-function useWidth() { const ref = useRef<HTMLDivElement>(null); const [w, setW] = useState(0); useEffect(() => { const el = ref.current; if (!el) return; const ro = new ResizeObserver(es => { for (const e of es) setW(e.contentRect.width); }); ro.observe(el); setW(el.clientWidth); return () => ro.disconnect(); }, []); return [ref, w] as const; }
+function useWidth() {
+  const ref = useRef<HTMLDivElement>(null); const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const ro = new ResizeObserver(es => { for (const e of es) setW(e.contentRect.width); });
+    ro.observe(el); setW(el.clientWidth); return () => ro.disconnect();
+  }, []);
+  return [ref, w] as const;
+}
 
 type Leaf = { name: string; size: number };
-type LR = { id: string; name: string; size: number; x: number; y: number; w: number; h: number; fill: string; dark: boolean; secName: string; secSize: number };
+export type LR = { id: string; name: string; size: number; x: number; y: number; w: number; h: number; fill: string; dark: boolean; secName: string; secSize: number };
 type Row = { name: string; size: number; x: number; y: number; w: number; h: number; fill: string; dark: boolean };
 type Col = { kind: "sec" | "other"; x: number; w: number; headerH: number; frameH: number; secName?: string; secSize?: number; dom?: string; leafRects: LR[]; rows: Row[] };
 type Tip = { x: number; y: number; lines: string[] } | null;
 
 const H = 440, PAD = 2, COLGAP = 6, LEAFGAP = 2, BIG = 0.04;
 function leavesOf(sec: any, cap: number): Leaf[] {
-  let lv: Leaf[] = (sec.children || []).filter((c: any) => c.size > 0).map((c: any) => ({ name: c.name, size: c.size })).sort((a, b) => b.size - a.size);
-  if (lv.length > cap) { const rest = lv.slice(cap).reduce((a, c) => a + c.size, 0); lv = lv.slice(0, cap); if (rest > 0) lv.push({ name: "other", size: rest }); }
-  const sum = lv.reduce((a, c) => a + c.size, 0);
+  let lv: Leaf[] = (sec.children || []).filter((c: any) => c.size > 0).map((c: any) => ({ name: c.name, size: c.size })).sort((a: Leaf, b: Leaf) => b.size - a.size);
+  if (lv.length > cap) { const rest = lv.slice(cap).reduce((a: number, c: Leaf) => a + c.size, 0); lv = lv.slice(0, cap); if (rest > 0) lv.push({ name: "other", size: rest }); }
+  const sum = lv.reduce((a: number, c: Leaf) => a + c.size, 0);
   if (lv.length && sum < sec.size) lv.push({ name: "(unattributed)", size: sec.size - sum });
   if (!lv.length) lv = [{ name: sec.name, size: sec.size }];
   return lv;
 }
 
-export default function MemoryTreemap({ data, result, device, onInspect, onShowSection }: {
-  data: any[]; result?: any; device?: any; onInspect?: (n: string) => void; onShowSection?: (s: string) => void;
-}) {
-  const symbols = result?.symbols || []; const isrs = result?.isrs || []; const deadItems = result?.dead_code?.items || [];
+export default function MemoryTreemap({ data, onSelect, selectedId }: { data: any[]; onSelect: (l: LR) => void; selectedId?: string }) {
   const [ref, W] = useWidth();
   const [focus, setFocus] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [tip, setTip] = useState<Tip>(null);
-  const [sel, setSel] = useState<LR | null>(null);
   const width = W > 0 ? W : 900;
 
-  const { totalAll, maxLeaf } = useMemo(() => { let m = 1; for (const d of data) for (const c of (d.children || [])) if (c.size > m) m = c.size; return { totalAll: data.reduce((a, d) => a + (d.size || 0), 0), maxLeaf: m }; }, [data]);
-  const symFor = (name: string, sec: string) => symbols.find((s: any) => s.name === name && s.section === sec) || symbols.find((s: any) => s.name === name);
-  const regionFor = (addr: number) => (device ? device.regions.find((rg: any) => inRegion(rg, addr)) : undefined);
-
-  useEffect(() => { if (!sel) return; const h = (e: KeyboardEvent) => { if (e.key === "Escape") setSel(null); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [sel]);
+  const { totalAll, maxLeaf } = useMemo(() => {
+    let m = 1; for (const d of data) for (const c of (d.children || [])) if (c.size > m) m = c.size;
+    return { totalAll: data.reduce((a: number, d: any) => a + (d.size || 0), 0), maxLeaf: m };
+  }, [data]);
 
   const view = useMemo(() => {
     const inner: R = { x: PAD, y: PAD, w: Math.max(0, width - PAD * 2), h: H - PAD * 2 };
     if (focus) {
-      const sec = data.find(d => d.name === focus); if (!sec) return { mode: "zoom" as const, leafRects: [] as LR[], title: focus, total: 0, n: 0 };
+      const sec = data.find(d => d.name === focus);
+      if (!sec) return { mode: "zoom" as const, leafRects: [] as LR[] };
       const lv = leavesOf(sec, 60); const rects = squarify(lv.map(l => l.size), inner);
       const leafRects: LR[] = lv.map((l, i) => { const c = heat(l.size / maxLeaf); return { id: `${sec.name}::${l.name}`, name: l.name, size: l.size, ...rects[i], fill: c.fill, dark: c.dark, secName: sec.name, secSize: sec.size }; });
-      return { mode: "zoom" as const, leafRects, title: sec.name, total: sec.size, n: (sec.children || []).filter((c: any) => c.size > 0).length };
+      return { mode: "zoom" as const, leafRects };
     }
-    const secs = data.filter(d => d.size > 0).sort((a, b) => b.size - a.size);
+    const secs = data.filter(d => d.size > 0).sort((a: any, b: any) => b.size - a.size);
     const big = secs.filter(s => s.size / totalAll >= BIG); const tiny = secs.filter(s => s.size / totalAll < BIG);
     const colsDef: { kind: "sec" | "other"; size: number; sec?: any; secs?: any[] }[] = big.map(s => ({ kind: "sec", size: s.size, sec: s }));
-    if (tiny.length) colsDef.push({ kind: "other", size: tiny.reduce((a, s) => a + s.size, 0), secs: tiny });
+    if (tiny.length) colsDef.push({ kind: "other", size: tiny.reduce((a: number, s: any) => a + s.size, 0), secs: tiny });
     const nCols = colsDef.length || 1; const usable = inner.w - COLGAP * (nCols - 1); const floor = Math.max(48, Math.min(132, usable / nCols));
-    let fixed = 0, flexSum = 0; const widths = colsDef.map(c => { const prop = (c.size / totalAll) * usable; if (prop < floor) { fixed += floor; return floor; } flexSum += prop; return -prop; });
+    let fixed = 0, flexSum = 0;
+    const widths = colsDef.map(c => { const prop = (c.size / totalAll) * usable; if (prop < floor) { fixed += floor; return floor; } flexSum += prop; return -prop; });
     const remain = usable - fixed; const cols: Col[] = []; let cx = inner.x;
     colsDef.forEach((c, i) => {
       const w = widths[i] < 0 ? (flexSum > 0 ? (-widths[i] / flexSum) * remain : remain) : widths[i];
       const frameH = inner.h; const headerH = w > 150 ? 38 : w > 96 ? 30 : 0;
       if (c.kind === "sec") {
-        const lv = leavesOf(c.sec, 26); const field: R = { x: cx + LEAFGAP, y: inner.y + headerH + LEAFGAP, w: Math.max(0, w - LEAFGAP * 2), h: Math.max(0, frameH - headerH - LEAFGAP * 2) };
+        const lv = leavesOf(c.sec, 26);
+        const field: R = { x: cx + LEAFGAP, y: inner.y + headerH + LEAFGAP, w: Math.max(0, w - LEAFGAP * 2), h: Math.max(0, frameH - headerH - LEAFGAP * 2) };
         const rects = squarify(lv.map(l => l.size), field);
         const leafRects: LR[] = lv.map((l, li) => { const cc = heat(l.size / maxLeaf); return { id: `${c.sec.name}::${l.name}`, name: l.name, size: l.size, ...rects[li], fill: cc.fill, dark: cc.dark, secName: c.sec.name, secSize: c.sec.size }; });
         const dom = lv[0] && lv[0].size / c.sec.size > 0.3 && field.h > 64 ? lv[0].name : undefined;
         cols.push({ kind: "sec", x: cx, w, headerH, frameH, secName: c.sec.name, secSize: c.sec.size, dom, leafRects, rows: [] });
       } else {
         const listTop = inner.y + headerH + LEAFGAP; const listH = Math.max(0, frameH - headerH - LEAFGAP * 2);
-        const rowsDef = (c.secs || []).slice().sort((a, b) => b.size - a.size); const minR = Math.min(24, listH / Math.max(1, rowsDef.length));
-        let rfixed = 0, rflex = 0; const rh = rowsDef.map(s => { const p = (s.size / (c.size || 1)) * listH; if (p < minR) { rfixed += minR; return minR; } rflex += p; return -p; });
+        const rowsDef = (c.secs || []).slice().sort((a: any, b: any) => b.size - a.size); const minR = Math.min(24, listH / Math.max(1, rowsDef.length));
+        let rfixed = 0, rflex = 0;
+        const rh = rowsDef.map(s => { const p = (s.size / (c.size || 1)) * listH; if (p < minR) { rfixed += minR; return minR; } rflex += p; return -p; });
         const rremain = listH - rfixed; let ry = listTop; const rows: Row[] = [];
         rowsDef.forEach((s, si) => { const h = rh[si] < 0 ? (rflex > 0 ? (-rh[si] / rflex) * rremain : 0) : rh[si]; const cc = heat(s.size / maxLeaf); rows.push({ name: s.name, size: s.size, x: cx + LEAFGAP, y: ry, w: Math.max(0, w - LEAFGAP * 2), h, fill: cc.fill, dark: cc.dark }); ry += h + 1; });
         cols.push({ kind: "other", x: cx, w, headerH, frameH, secName: "other sections", secSize: c.size, leafRects: [], rows });
@@ -103,13 +135,14 @@ export default function MemoryTreemap({ data, result, device, onInspect, onShowS
   const showTip = (e: React.MouseEvent, lines: string[]) => setTip({ x: e.clientX, y: e.clientY, lines });
 
   const LeafG = (l: LR, delay: number, labeled: boolean) => {
-    const isSel = sel?.id === l.id;
+    const isSel = selectedId === l.id;
     return (
       <g key={l.id} className="tm-leaf"
         style={{ transformBox: "fill-box", transformOrigin: "center", animation: "tmIn .34s ease both", animationDelay: `${Math.min(delay, 32) * 5}ms`, opacity: hover && hover !== l.id ? 0.4 : 1, cursor: "pointer", filter: isSel ? "drop-shadow(0 0 7px rgba(51,214,194,.55))" : "none" }}
-        onMouseMove={e => showTip(e, [l.name, `${(l.size / 1024).toFixed(2)} KB`, `${pct(l.size, l.secSize)}% of ${l.secName}`, `${pct(l.size, totalAll)}% of mapped`, "click for details"])}
-        onMouseLeave={() => { setHover(null); setTip(null); }} onMouseEnter={() => setHover(l.id)}
-        onClick={(e) => { e.stopPropagation(); setSel(l); }}>
+        onMouseMove={e => showTip(e, [l.name, `${(l.size / 1024).toFixed(2)} KB`, `${pct(l.size, l.secSize)}% of ${l.secName}`, `${pct(l.size, totalAll)}% of mapped`, "click to inspect"])}
+        onMouseLeave={() => { setHover(null); setTip(null); }}
+        onMouseEnter={() => setHover(l.id)}
+        onClick={(e) => { e.stopPropagation(); onSelect(l); }}>
         <rect x={l.x} y={l.y} width={Math.max(0, l.w - LEAFGAP)} height={Math.max(0, l.h - LEAFGAP)} rx={3} fill={l.fill} stroke={isSel ? "var(--a)" : hover === l.id ? "#e8f1ec" : "rgba(0,0,0,.35)"} strokeWidth={isSel ? 2.2 : hover === l.id ? 1.4 : 0.6} />
         <rect x={l.x} y={l.y} width={Math.max(0, l.w - LEAFGAP)} height={2} rx={1} fill="rgba(255,255,255,.22)" />
         {labeled && l.w > 46 && l.h > 17 && <text x={l.x + 6} y={l.y + 15} fill={l.dark ? "#0a130f" : "#f1f7f3"} fontSize={l.w > 120 ? 12 : 10.5} fontFamily="JetBrains Mono" fontWeight={700}>{elide(l.name, Math.floor((l.w - 12) / (l.w > 120 ? 7.4 : 6.5)))}</text>}
@@ -118,25 +151,15 @@ export default function MemoryTreemap({ data, result, device, onInspect, onShowS
     );
   };
 
-  const sym = sel ? symFor(sel.name, sel.secName) : null;
-  const isAggregate = !!sel && (sel.name === "other" || sel.name === "(unattributed)" || !sym);
-  const canDisasm = !!sym && sym.type === "STT_FUNC" && sym.size > 0;
-  const isr = sel ? isrs.find((i: any) => i.name === sel.name || i.name.split("@")[0] === sel.name) : null;
-  const isDead = sel ? deadItems.some((d: any) => d.name === sel.name) : false;
-  const region = sym ? regionFor(sym.value) : undefined;
-  const selPctSec = sel ? pct(sel.size, sel.secSize) : "0";
-  const selPctBin = sel ? pct(sel.size, totalAll) : "0";
-  const sibs = sel ? (data.find(d => d.name === sel.secName)?.children || []).filter((c: any) => c.name !== sel.name && c.size > 0).sort((a: any, b: any) => b.size - a.size).slice(0, 6) : [];
-
   return (
     <div className="panel" style={{ position: "relative" }}>
-      <style>{`@keyframes tmIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}} @keyframes grow{from{width:0}} @keyframes tmFade{from{opacity:0}to{opacity:1}} @keyframes tmSlide{from{transform:translateX(100%);opacity:.35}to{transform:none;opacity:1}} .tm-leaf{transition:opacity .12s} .tm-colframe{transition:stroke .15s} .tm-scrim{position:fixed;inset:0;background:rgba(3,6,10,.5);backdrop-filter:blur(2px);z-index:70;animation:tmFade .2s ease both} .tm-drawer{position:fixed;top:0;right:0;bottom:0;width:388px;max-width:92vw;z-index:80;background:linear-gradient(180deg,var(--panel2),var(--panel));border-left:1px solid var(--line2);box-shadow:-24px 0 60px -30px rgba(0,0,0,.9);display:flex;flex-direction:column;animation:tmSlide .26s cubic-bezier(.2,.8,.2,1) both} .tm-drawer .hd{padding:16px 18px 12px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:10px} .tm-drawer .hd .nm{font-family:'Chakra Petch';font-weight:700;font-size:20px;line-height:1.12;letter-spacing:.01em;word-break:break-all} .tm-drawer .hd .sub{font-family:'JetBrains Mono';font-size:10px;color:var(--mut);margin-top:4px;letter-spacing:.04em} .tm-drawer .hd .x{margin-left:auto;cursor:pointer;color:var(--mut);border:1px solid var(--line);border-radius:3px;width:26px;height:26px;display:grid;place-items:center;font-family:'JetBrains Mono';flex:none} .tm-drawer .hd .x:hover{color:var(--fg);border-color:var(--a-dim)} .tm-drawer .bd{padding:16px 18px 20px;overflow:auto;flex:1} .tm-hero{display:flex;gap:18px;align-items:flex-end;margin-bottom:14px} .tm-hero .big{font-family:'Chakra Petch';font-weight:700;font-size:30px;line-height:1} .tm-hero .big.a{color:var(--a)} .tm-hero .lbl{font-family:'JetBrains Mono';font-size:9px;color:var(--mut);letter-spacing:.14em;text-transform:uppercase;margin-top:3px} .tm-sw{height:6px;border-radius:3px;margin:3px 0 12px;position:relative;overflow:hidden;background:rgba(255,255,255,.05)} .tm-sw i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;animation:grow .6s cubic-bezier(.2,.7,.2,1) both} .tm-swrow{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:9px;color:var(--mut);letter-spacing:.1em;text-transform:uppercase} .tm-pill{font-family:'JetBrains Mono';font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid var(--line);color:var(--mut)} .tm-pill.a{color:var(--a);border-color:var(--a-dim);background:rgba(51,214,194,.08)} .tm-pill.b{color:var(--b);border-color:var(--b-dim);background:rgba(240,168,48,.08)} .tm-pill.d{color:var(--danger);border-color:rgba(224,86,107,.5);background:rgba(224,86,107,.08)} .tm-chip{font-family:'JetBrains Mono';font-size:10px;padding:3px 8px;border:1px solid var(--line);border-radius:3px;cursor:pointer;color:var(--mut);transition:all .12s} .tm-chip:hover{color:var(--a);border-color:var(--a-dim)} .tm-act{font-family:'Chakra Petch';font-weight:600;letter-spacing:.05em;text-transform:uppercase;font-size:12px;padding:10px 14px;border-radius:4px;cursor:pointer;border:1px solid var(--line2);background:linear-gradient(180deg,#16202b,#0e151d);color:var(--fg);transition:all .14s;width:100%;text-align:left} .tm-act:hover:not(:disabled){border-color:var(--a-dim);color:var(--a)} .tm-act.primary{border-color:var(--a-dim);color:var(--a)} .tm-act:disabled{opacity:.4;cursor:not-allowed} .tm-sec-lbl{font-family:'JetBrains Mono';font-size:9px;color:var(--mut);letter-spacing:.16em;text-transform:uppercase;margin:16px 0 7px}`}</style>
+      <style>{`@keyframes tmIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}} .tm-leaf{transition:opacity .12s} .tm-colframe{transition:stroke .15s}`}</style>
       <div className="panel-head">
         <span>Memory Treemap{focus && <span className="acc"> · {focus}</span>}</span>
         <span className="flex items-center gap-3">
           {focus && <button className="acc mono text-[10px] uppercase tracking-widest hover:underline" onClick={() => setFocus(null)}>‹ all sections</button>}
           <span className="heatkey"><span className="mut mono text-[9px]">0</span><i style={{ background: "linear-gradient(90deg,#3f8f7a,#c7b24c,#cb5d4d)" }} /><span className="mut mono text-[9px]">{(maxLeaf / 1024).toFixed(1)} KB</span></span>
-          <span className="tag">{focus ? "click a tile for its record" : "header = zoom · tile = record"}</span>
+          <span className="tag">{focus ? "click a tile to inspect" : "header = zoom · tile = inspect"}</span>
         </span>
       </div>
       <div className="p-3">
@@ -170,64 +193,7 @@ export default function MemoryTreemap({ data, result, device, onInspect, onShowS
           </svg>
         </div>
       </div>
-
       {tip && <div style={{ position: "fixed", left: tip.x + 14, top: tip.y + 14, zIndex: 60, pointerEvents: "none", background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 4, padding: "7px 10px", fontFamily: "JetBrains Mono", fontSize: 11, lineHeight: 1.5, boxShadow: "0 10px 30px -12px rgba(0,0,0,.8)" }}><div className="fg" style={{ fontWeight: 700 }}>{tip.lines[0]}</div>{tip.lines.slice(1).map((l, i) => <div key={i} className="mut">{l}</div>)}</div>}
-
-      {sel && (
-        <>
-          <div className="tm-scrim" onClick={() => setSel(null)} />
-          <aside className="tm-drawer" key={sel.id}>
-            <div className="hd">
-              <div style={{ minWidth: 0 }}>
-                <div className="nm fg">{sel.name}</div>
-                <div className="sub">{isAggregate ? "aggregate / unattributed" : `${sym.type} · ${sym.bind}`} · {sel.secName}</div>
-              </div>
-              <div className="x" onClick={() => setSel(null)}>✕</div>
-            </div>
-            <div className="bd">
-              <div className="tm-hero">
-                <div><div className="big a">{selPctSec}%</div><div className="lbl">of {sel.secName}</div></div>
-                <div><div className="big fg">{(sel.size / 1024).toFixed(2)}</div><div className="lbl">KB · {sel.size} B</div></div>
-                <div style={{ marginLeft: "auto" }}><div className="big mut" style={{ fontSize: 22 }}>{selPctBin}%</div><div className="lbl">of mapped</div></div>
-              </div>
-              <div className="tm-swrow"><span>share of {sel.secName}</span><span className="fg">{selPctSec}%</span></div>
-              <div className="tm-sw"><i style={{ width: `${Math.min(100, +selPctSec)}%`, background: sel.fill }} /></div>
-              <div className="tm-swrow"><span>share of binary</span><span className="fg">{selPctBin}%</span></div>
-              <div className="tm-sw"><i style={{ width: `${Math.min(100, +selPctBin)}%`, background: sel.fill, opacity: 0.6 }} /></div>
-
-              <div className="spec" style={{ marginTop: 4 }}>
-                <div className="row"><span className="k">address</span><span className="v a">{sym ? "0x" + sym.value.toString(16) : "—"}</span></div>
-                <div className="row"><span className="k">size</span><span className="v">{sel.size} B</span></div>
-                <div className="row"><span className="k">section</span><span className="v">{sel.secName}</span></div>
-                <div className="row"><span className="k">type / bind</span><span className="v">{sym ? `${sym.type} · ${sym.bind}` : "—"}</span></div>
-                <div className="row"><span className="k">memory region</span><span className="v b">{region ? `${region.name} +0x${(sym.value - region.base).toString(16)}` : (sym ? sym.section : "—")}</span></div>
-                <div className="row"><span className="k">module group</span><span className="v">{modOf(sel.name)}</span></div>
-              </div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-                <span className="tm-pill a">{modOf(sel.name)}</span>
-                {isr && <span className="tm-pill b">ISR · vec {isr.vector >= 0 ? isr.vector : "ext"}</span>}
-                {!isAggregate && sym && sym.section === ".text" && sym.type === "STT_FUNC" && (isDead ? <span className="tm-pill d">unreferenced</span> : <span className="tm-pill a">referenced</span>)}
-                {region && <span className="tm-pill">{region.kind}</span>}
-              </div>
-
-              {sibs.length > 0 && (<>
-                <div className="tm-sec-lbl">also in {sel.secName}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {sibs.map((c: any) => <span key={c.name} className="tm-chip" onClick={() => { const cc = heat(c.size / maxLeaf); setSel({ id: `${sel.secName}::${c.name}`, name: c.name, size: c.size, secName: sel.secName, secSize: sel.secSize, fill: cc.fill, dark: cc.dark, x: 0, y: 0, w: 0, h: 0 }); }}>{elide(c.name, 22)}</span>)}
-                </div>
-              </>)}
-
-              <div className="tm-sec-lbl">actions</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <button className="tm-act primary" disabled={!canDisasm} title={canDisasm ? "open in the disassembler / simulator" : "no single symbol to disassemble"} onClick={() => onInspect?.(sel.name)}>⌬ disassemble {canDisasm ? sel.name : "—"}</button>
-                <button className="tm-act" onClick={() => onShowSection?.(sel.secName)}>≣ show {sel.secName} in symbol table</button>
-              </div>
-              {isAggregate && <div className="mut mono text-[10px] mt-3 leading-relaxed">this tile is an aggregate of smaller symbols — zoom or open the symbol table to inspect them individually.</div>}
-            </div>
-          </aside>
-        </>
-      )}
     </div>
   );
 }
