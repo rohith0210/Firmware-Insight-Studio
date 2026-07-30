@@ -18,9 +18,11 @@
 
 <!-- DEMO_PLACEHOLDER_START -->
 <p align="center">
-  <img width="1254" height="1254" alt="FIS" src="https://github.com/user-attachments/assets/8d6d34ec-94bb-45c3-98de-8cbfb8392b21" />
-  <br/>
-  <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
+  <img
+    src="https://github.com/user-attachments/assets/8d6d34ec-94bb-45c3-98de-8cbfb8392b21"
+    width="300"
+    alt="Firmware Insight Studio Logo"
+  />
 </p>
 <!-- DEMO_PLACEHOLDER_END -->
 
