@@ -161,7 +161,7 @@ Disassembly decoding and register schema attribution support the following targe
 ## Screenshots
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_overview.png" alt="Overview Workspace" width="48%"/>
+  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-04-11" src="https://github.com/user-attachments/assets/61eaaa0b-bd86-41b6-ba98-8458b002dc87" alt="Overview Workspace" width="48%" />
   <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_treemap.png" alt="Memory Analysis Treemap" width="48%"/>
 </p>
 <p align="center">
