@@ -23,6 +23,7 @@
     width="300"
     alt="Firmware Insight Studio Logo"
   />
+  <br/> <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
 </p>
 <!-- DEMO_PLACEHOLDER_END -->
 
