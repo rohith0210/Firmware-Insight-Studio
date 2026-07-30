@@ -162,11 +162,11 @@ Disassembly decoding and register schema attribution support the following targe
 
 <p align="center">
   <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-04-11" src="https://github.com/user-attachments/assets/61eaaa0b-bd86-41b6-ba98-8458b002dc87" alt="Overview Workspace" width="48%" />
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_treemap.png" alt="Memory Analysis Treemap" width="48%"/>
+  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-06-54" src="https://github.com/user-attachments/assets/25229322-3e6c-4533-b0c8-d22dd28712e6" alt="Memory Analysis Treemap" width="48%"/>
 </p>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_investigator.png" alt="Code Investigator Workspace" width="48%"/>
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_callgraph.png" alt="Call Graph Inspector" width="48%"/>
+  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/8dfcf1f0-288b-4aa3-9033-a8d17b5c72ab" alt="Code Investigator Workspace" width="48%"/>
+  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/0aa55eb9-c4ed-4e86-affa-b037ff49c013" alt="Call Graph Inspector" width="48%"/>
 </p>
 
 ---
