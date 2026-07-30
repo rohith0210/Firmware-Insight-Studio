@@ -7,8 +7,16 @@ const tone = (ratio: number) => ratio >= .85 ? "#e0566b" : ratio >= .65 ? "#f0a8
 
 function Pressure({ title, result, device, mode }: { title: Space; result: ParseResult; device: Device; mode: "flash" | "ram" }) {
   const regions = colRegions(device, mode);
-  const capacity = regions.reduce((total, region) => total + region.size, 0);
-  const sections = result.sections.filter(section => section.size > 0 && regions.some(region => inRegion(region, section.addr)));
+  const inRegSecs = result.sections.filter(section => section.size > 0 && regions.some(region => inRegion(region, section.addr)));
+  const fallbackSecs = result.sections.filter(section => {
+    if (section.size <= 0) return false;
+    const name = section.name.toLowerCase();
+    if (mode === "flash") return name.includes("text") || name.includes("rodata") || name.includes("init") || name.includes("isr") || name.includes("code");
+    return name.includes("data") || name.includes("bss") || name.includes("heap") || name.includes("stack");
+  });
+  const sections = inRegSecs.length > 0 ? inRegSecs : (fallbackSecs.length > 0 ? fallbackSecs : result.sections.filter(s => s.size > 0));
+
+  const capacity = regions.reduce((total, region) => total + region.size, 0) || (mode === "flash" ? device.flashSize : device.sramSize) || 0;
   const used = sections.reduce((total, section) => total + section.size, 0);
   const ratio = capacity ? used / capacity : 0;
   const top = [...sections].sort((a, b) => b.size - a.size).slice(0, 4);

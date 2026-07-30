@@ -79,12 +79,8 @@ export default function MemoryMap({
   const ramUsed = (result.summary[".data"] || 0) + (result.summary[".bss"] || 0) + (result.summary["heap"] || 0);
   const ramFree = Math.max(0, ramTotal - ramUsed);
   const heapUsed = result.summary["heap"] ?? 2048;
-  const stackPeak = result.summary["stack"] ?? 1024;
   const stackReserved = 4096;
 
-  const healthScore = Math.min(100, Math.max(0, Math.round(100 - (flashUsed / flashTotal) * 40 - (ramUsed / ramTotal) * 40)));
-
-  // Largest Object & Function Resolution
   const largestObject = useMemo(() => {
     if (result.objects && result.objects.length > 0) {
       return result.objects.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0];
@@ -227,57 +223,7 @@ export default function MemoryMap({
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
-      {/* 1. HEADER: TWO CLEAN METRIC ROWS */}
-      <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex flex-col gap-2 flex-shrink-0 mono text-xs">
-        <div className="flex items-center justify-between">
-          <span className="px-2 py-0.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold uppercase tracking-wider text-[11px]">
-            Memory Analysis
-          </span>
-          <span className="text-[var(--mut)] font-mono text-[11px]">{device?.name || "STM32F103C8"}</span>
-        </div>
-
-        {/* ROW 1 METRICS */}
-        <div className="grid grid-cols-4 gap-3">
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Flash Used</span>
-            <span className="font-bold text-white text-sm">{fmtSize(flashUsed)} <small className="text-[10px] text-[var(--mut)] font-normal">({percent(flashUsed, flashTotal)})</small></span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">RAM Used</span>
-            <span className="font-bold text-amber-400 text-sm">{fmtSize(ramUsed)} <small className="text-[10px] text-[var(--mut)] font-normal">({percent(ramUsed, ramTotal)})</small></span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Stack Peak</span>
-            <span className="font-bold text-emerald-400 text-sm">{fmtSize(stackPeak)}</span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Health Score</span>
-            <span className="font-bold text-emerald-400 text-sm">{healthScore}%</span>
-          </div>
-        </div>
-
-        {/* ROW 2 METRICS */}
-        <div className="grid grid-cols-4 gap-3">
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Largest Object</span>
-            <span className="font-bold text-[var(--b)] text-xs truncate max-w-[120px]">{largestObject?.name || "main.o"}</span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Largest Function</span>
-            <span className="font-bold text-amber-300 text-xs truncate max-w-[120px]">{largestFunction?.name || "main"}</span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Largest Section</span>
-            <span className="font-bold text-white text-xs">{largestSection?.name}</span>
-          </div>
-          <div className="px-3 py-1.5 bg-black/40 border border-emerald-500/30 rounded flex justify-between items-center">
-            <span className="text-[var(--mut)] text-[11px]">Potential Savings</span>
-            <span className="font-bold text-emerald-400 text-xs">~2.1 KB</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. THREE-COLUMN MAIN WORKSPACE */}
+      {/* 1. THREE-COLUMN MAIN WORKSPACE */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* LEFT PANEL: CLEAN COLLAPSIBLE REGION TREE EXPLORER */}
         <aside className="w-72 border-r border-[var(--line)] bg-[var(--panel)] flex flex-col overflow-hidden flex-shrink-0">
@@ -294,7 +240,7 @@ export default function MemoryMap({
                 className="w-full text-left font-bold text-emerald-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
               >
                 <span>{expandedParents.FLASH ? "▼" : "▶"} Flash (0x08000000)</span>
-                <span className="text-[10px] text-[var(--mut)]">{fmtSize(flashUsed)}</span>
+                <span className="text-[10px] text-[var(--mut)]">{fmtSize(flashUsed)} / {fmtSize(flashTotal)}</span>
               </button>
 
               {expandedParents.FLASH &&
@@ -329,7 +275,7 @@ export default function MemoryMap({
                 className="w-full text-left font-bold text-amber-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
               >
                 <span>{expandedParents.SRAM ? "▼" : "▶"} SRAM (0x20000000)</span>
-                <span className="text-[10px] text-[var(--mut)]">{fmtSize(ramUsed)}</span>
+                <span className="text-[10px] text-[var(--mut)]">{fmtSize(ramUsed)} / {fmtSize(ramTotal)}</span>
               </button>
 
               {expandedParents.SRAM &&
@@ -359,33 +305,76 @@ export default function MemoryMap({
           </div>
         </aside>
 
-        {/* 3. CENTER: HERO TREEMAP WITH SPACIOUS PADDING */}
+        {/* 2. CENTER: EXPANDED NORMALIZED MEMORY LAYOUT & HERO TREEMAP */}
         <main className="flex-1 flex flex-col bg-[#070b10] border-r border-[var(--line)] overflow-hidden">
-          {/* INTERACTIVE ADDRESS MAP BAR */}
-          <div className="p-3 border-b border-[var(--line)] bg-[var(--panel)] space-y-1.5 flex-shrink-0">
-            <div className="mono text-xs font-bold text-[var(--a)] flex justify-between items-center">
-              <span>Memory Layout</span>
-              <span className="text-[10px] text-[var(--mut)]">Flash: {fmtSize(flashUsed)} / RAM: {fmtSize(ramUsed)}</span>
+          {/* INTERACTIVE NORMALIZED MEMORY LAYOUT VISUALIZER */}
+          <div className="p-3 border-b border-[var(--line)] bg-[var(--panel)] space-y-2 flex-shrink-0">
+            <div className="mono text-xs flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-[var(--a)] uppercase tracking-wider text-xs">
+                  Physical Memory Layout
+                </span>
+                <span className="text-[10px] font-mono text-[var(--mut)]">
+                  (Normalized View)
+                </span>
+              </div>
+              <span className="text-[10px] text-[var(--mut)] mono font-mono">
+                Flash: <strong className="text-emerald-400">{fmtSize(flashUsed)}</strong>/{fmtSize(flashTotal)} · RAM: <strong className="text-amber-400">{fmtSize(ramUsed)}</strong>/{fmtSize(ramTotal)}
+              </span>
             </div>
-            <div className="h-8 w-full rounded bg-black/60 border border-[var(--line)] flex overflow-hidden p-0.5 gap-0.5">
-              {sectionRows.map(sec => (
-                <button
-                  key={sec.id}
-                  onClick={() => handleRegionSelection(sec)}
-                  style={{ flex: sec.size, backgroundColor: sec.color }}
-                  title={`${sec.name}: ${fmtSize(sec.size)} (${sec.start}-${sec.end})`}
-                  className="h-full rounded-sm opacity-85 hover:opacity-100 hover:scale-y-105 transition flex items-center justify-center text-[9px] font-bold text-black truncate px-1"
+
+            {/* SINGLE UNIFIED CONTINUOUS NORMALIZED BAR CONTAINER */}
+            <div className="h-12 w-full rounded-md bg-black/80 border border-[var(--line)] flex overflow-hidden p-1 gap-1 relative shadow-inner">
+              {sectionRows.map(sec => {
+                const isSelected = activeRegion?.id === sec.id;
+                return (
+                  <button
+                    key={sec.id}
+                    onClick={() => handleRegionSelection(sec)}
+                    style={{ flex: 1, backgroundColor: sec.color }}
+                    title={`${sec.name} (${sec.parent}): ${fmtSize(sec.size)} (${sec.start} - ${sec.end}) · ${sec.purpose}`}
+                    className={`h-full rounded transition flex flex-col items-center justify-center text-black px-2 relative group overflow-hidden ${
+                      isSelected ? "ring-2 ring-white scale-[1.01] z-10 shadow-lg" : "opacity-90 hover:opacity-100 hover:scale-[1.01]"
+                    }`}
+                  >
+                    <span className="font-bold text-[11px] leading-none truncate w-full text-center">
+                      {sec.name}
+                    </span>
+                    <span className="text-[9px] font-mono opacity-80 leading-none mt-0.5 truncate w-full text-center">
+                      {fmtSize(sec.size)}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {/* UNALLOCATED HEADROOM INDICATORS */}
+              {flashFree > 0 && (
+                <div
+                  style={{ flex: 1 }}
+                  className="h-full rounded border border-dashed border-emerald-500/40 bg-emerald-500/5 flex flex-col items-center justify-center text-emerald-400 px-2 text-[9px] font-mono"
+                  title={`Unallocated Flash Headroom: ${fmtSize(flashFree)}`}
                 >
-                  {sec.name}
-                </button>
-              ))}
+                  <span className="font-bold">Free Flash</span>
+                  <span className="opacity-75">{fmtSize(flashFree)}</span>
+                </div>
+              )}
+              {ramFree > 0 && (
+                <div
+                  style={{ flex: 1 }}
+                  className="h-full rounded border border-dashed border-amber-500/40 bg-amber-500/5 flex flex-col items-center justify-center text-amber-400 px-2 text-[9px] font-mono"
+                  title={`Unallocated SRAM Headroom: ${fmtSize(ramFree)}`}
+                >
+                  <span className="font-bold">Free RAM</span>
+                  <span className="opacity-75">{fmtSize(ramFree)}</span>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* SIMPLIFIED TREEMAP (WITH 10px SPACIOUS PADDING) */}
+          {/* SIMPLIFIED HERO TREEMAP */}
           <div className="flex-1 p-3 flex flex-col min-h-0 overflow-hidden">
             <div className="px-1 py-1 mono text-xs text-[var(--fg)] font-bold flex justify-between">
-              <span>Memory Treemap</span>
+              <span>Memory Treemap (Symbol Level Breakdown)</span>
             </div>
             <div className="flex-1 min-h-0 p-2 bg-black/40 border border-[var(--line)] rounded-lg">
               <MemoryTreemap

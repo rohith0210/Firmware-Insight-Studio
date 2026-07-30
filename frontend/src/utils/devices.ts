@@ -1204,24 +1204,46 @@ const minAddr = (secs: any[], names: string[]) => {
 export function detectDevice(res: { arch: string; elf_class?: number; sections: any[]; summary: Record<string, number> }): Device {
   const arch = res.arch || "";
   const usedF = (res.summary[".text"] || 0) + (res.summary[".rodata"] || 0);
+  const usedR = (res.summary[".data"] || 0) + (res.summary[".bss"] || 0);
 
   if (/xtensa/i.test(arch)) {
     return { ...DB.esp32, detection: "Xtensa architecture signature", possibleMatches: ["esp32", "esp32s2", "esp32s3"] };
   }
 
-  if (/x86|80386|i386|amd64/i.test(arch)) {
-    const t = minAddr(res.sections, [".text", ".init", ".rodata"]) || 0x1000;
-    const d = minAddr(res.sections, [".data", ".bss"]) || 0x4000;
+  if (/riscv|risc-v/i.test(arch)) {
+    return {
+      ...DB.generic_riscv,
+      detection: "RISC-V architecture signature",
+      possibleMatches: ["generic_riscv", "esp32c3", "esp32c6"],
+      regions: [
+        r("FLASH", "flash", 0x20000000, np2(usedF) * 2 || 64 * K),
+        r("SRAM", "ram", 0x80000000, np2(usedR) * 2 || 16 * K),
+      ]
+    };
+  }
+
+  if (/x86|x64|80386|i386|amd64/i.test(arch)) {
+    const t = minAddr(res.sections, [".text", ".init", ".rodata"]) || 0x00400000;
+    const d = minAddr(res.sections, [".data", ".bss"]) || 0x00600000;
     return {
       ...DB.generic_x86,
-      name: `${arch} · host binary`,
-      detection: "x86 Host ELF Header",
-      regions: [r(".text / .rodata", "virt", t, usedF || 1), r(".data / .bss", "virt", d, (res.summary[".data"] || 0) + (res.summary[".bss"] || 0) || 1)],
+      name: `${arch} · Host Binary`,
+      detection: "x86 / x64 Host ELF Header",
+      mcu: false,
+      regions: [r(".text / .rodata", "virt", t, usedF || 1024 * K), r(".data / .bss", "virt", d, usedR || 256 * K)],
     };
   }
 
   if (/aarch64|arm64/i.test(arch)) {
-    return { ...DB.generic_aarch64, detection: "AArch64 ELF Header" };
+    const t = minAddr(res.sections, [".text", ".init", ".rodata"]) || 0x00400000;
+    const d = minAddr(res.sections, [".data", ".bss"]) || 0x00600000;
+    return {
+      ...DB.generic_aarch64,
+      name: `${arch} · Host Binary`,
+      detection: "AArch64 Host ELF Header",
+      mcu: false,
+      regions: [r(".text / .rodata", "virt", t, usedF || 1024 * K), r(".data / .bss", "virt", d, usedR || 256 * K)],
+    };
   }
 
   const t = (minAddr(res.sections, [".text", ".init", ".rodata", ".isr_vector"]) || 0) >>> 0;

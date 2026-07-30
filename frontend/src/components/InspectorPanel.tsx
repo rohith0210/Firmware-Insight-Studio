@@ -5,7 +5,17 @@ import type { LR } from "./MemoryTreemap";
 const STOPS = ["#3f8f7a", "#86a85a", "#c7b24c", "#d68f3e", "#cb5d4d"].map(c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]);
 const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
 function heat(t: number) { t = Math.max(0, Math.min(1, t)); const x = t * (STOPS.length - 1); const i = Math.floor(x); const f = x - i; const a = STOPS[i], b = STOPS[Math.min(STOPS.length - 1, i + 1)]; const rgb = [mix(a[0], b[0], f), mix(a[1], b[1], f), mix(a[2], b[2], f)]; const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]; return { fill: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, dark: lum > 138 }; }
-const modOf = (n: string) => { const x = n.split("@")[0]; if (x.startsWith("HAL_") || x.startsWith("LL_")) { const p = x.split("_"); return (p[0] + "_" + (p[1] || "")).toUpperCase(); } if (x.startsWith("__") || x.startsWith("_Z")) return "runtime / c++"; const p = x.split("_"); return (p[0] || "app").toUpperCase() || "app"; };
+const modOf = (n: any) => {
+  if (!n || typeof n !== "string") return "APP";
+  const x = n.split("@")[0];
+  if (x.startsWith("HAL_") || x.startsWith("LL_")) {
+    const p = x.split("_");
+    return (p[0] + "_" + (p[1] || "")).toUpperCase();
+  }
+  if (x.startsWith("__") || x.startsWith("_Z")) return "runtime / c++";
+  const p = x.split("_");
+  return (p[0] || "APP").toUpperCase() || "APP";
+};
 
 export default function InspectorPanel({
   symbol,

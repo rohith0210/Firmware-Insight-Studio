@@ -27,8 +27,6 @@ const GROUPS: { lbl: string; items: { id: View; t: string; ic: string }[] }[] = 
     items: [
       { id: "optimize", t: "Optimization", ic: "✦" },
       { id: "compare", t: "Build Compare", ic: "⇄" },
-      { id: "frag", t: "Fragmentation", ic: "▦" },
-      { id: "timeline", t: "Timeline", ic: "⏱" },
     ],
   },
   {

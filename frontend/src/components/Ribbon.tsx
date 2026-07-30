@@ -16,6 +16,7 @@ export default function Ribbon({
   onJSON,
   onCSV,
   onReset,
+  onOpenSearch,
 }: {
   title: string;
   result: ParseResult | null;
@@ -28,6 +29,7 @@ export default function Ribbon({
   onJSON: () => void;
   onCSV: () => void;
   onReset: () => void;
+  onOpenSearch?: () => void;
 }) {
   const [showSelector, setShowSelector] = useState(false);
   const [showSpecs, setShowSpecs] = useState(false);
@@ -35,6 +37,20 @@ export default function Ribbon({
   return (
     <div className="ribbon">
       <span className="crumb">WORKBENCH <b>/</b> {title}</span>
+
+      {/* UNIVERSAL SEARCH BUTTON */}
+      {result && onOpenSearch && (
+        <button
+          onClick={onOpenSearch}
+          className="px-3 py-1 rounded bg-black/40 border border-[var(--line)] hover:border-[var(--a)] text-gray-300 hover:text-white text-xs mono flex items-center gap-2 transition"
+          title="Universal Search Palette (Ctrl+K)"
+        >
+          <span className="text-[var(--a)]">🔍</span>
+          <span>Search...</span>
+          <kbd className="px-1.5 py-0.2 rounded bg-white/10 text-[9px] text-gray-400 font-mono">Ctrl+K</kbd>
+        </button>
+      )}
+
       <span className="spacer" />
 
       {result && device && (

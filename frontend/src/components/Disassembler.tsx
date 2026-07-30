@@ -10,66 +10,22 @@ type Dis = {
   touched: string[];
   written: string[];
   schema: { n: string; role: string }[];
+  error?: boolean;
+  reason?: string;
+  message?: string;
 };
 type Log = { c: "o" | "a" | "b" | "e" | "m"; t: string };
 type Status = "idle" | "running" | "halted" | "returned";
 
-// Fallback Synthetic Disassembly Generator if binary is not cached or backend is offline
-function generateSyntheticDisassembly(symName: string, baseAddr: number, symSize: number): Dis {
-  const hexAddr = (offset: number) => baseAddr + offset;
-  let instructions: Instr[] = [];
-
-  if (symName === "main") {
-    instructions = [
-      { addr: hexAddr(0), bytes: "b570", mn: "push", op: "{r4, r5, r6, lr}", t: ["sp"], w: ["sp"] },
-      { addr: hexAddr(2), bytes: "f000 f802", mn: "bl", op: "0x80001b0 <HAL_Init>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(6), bytes: "f000 f820", mn: "bl", op: "0x8000200 <SystemClock_Config>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(10), bytes: "f000 f840", mn: "bl", op: "0x8000240 <MX_GPIO_Init>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(14), bytes: "f000 f860", mn: "bl", op: "0x8000280 <MX_USART2_UART_Init>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(18), bytes: "4805", mn: "ldr", op: "r0, [pc, #20]", t: ["pc"], w: ["r0"] },
-      { addr: hexAddr(20), bytes: "2120", mn: "movs", op: "r1, #32", t: [], w: ["r1"] },
-      { addr: hexAddr(22), bytes: "f000 f880", mn: "bl", op: "0x8000300 <HAL_GPIO_TogglePin>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(26), bytes: "f44f 70fa", mn: "mov.w", op: "r0, #500", t: [], w: ["r0"] },
-      { addr: hexAddr(30), bytes: "f000 f8b0", mn: "bl", op: "0x8000360 <HAL_Delay>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(34), bytes: "e7f0", mn: "b.n", op: `0x${(baseAddr + 18).toString(16)} <main+0x12>`, t: [], w: ["pc"] },
-      { addr: hexAddr(36), bytes: "bd70", mn: "pop", op: "{r4, r5, r6, pc}", t: ["sp"], w: ["r4", "r5", "r6", "pc", "sp"] },
-    ];
-  } else {
-    instructions = [
-      { addr: hexAddr(0), bytes: "b580", mn: "push", op: "{r7, lr}", t: ["sp"], w: ["sp"] },
-      { addr: hexAddr(2), bytes: "af00", mn: "add", op: "r7, sp, #0", t: ["sp"], w: ["r7"] },
-      { addr: hexAddr(4), bytes: "f000 f810", mn: "bl", op: "0x8000410 <HAL_GetTick>", t: ["pc"], w: ["lr", "pc"] },
-      { addr: hexAddr(8), bytes: "2800", mn: "cmp", op: "r0, #0", t: ["r0"], w: ["xpsr"] },
-      { addr: hexAddr(10), bytes: "d102", mn: "bne.n", op: `0x${(baseAddr + 16).toString(16)} <${symName}+0x10>`, t: ["xpsr"], w: ["pc"] },
-      { addr: hexAddr(12), bytes: "2001", mn: "movs", op: "r0, #1", t: [], w: ["r0"] },
-      { addr: hexAddr(14), bytes: "e00a", mn: "b.n", op: `0x${(baseAddr + 36).toString(16)} <${symName}+0x24>`, t: [], w: ["pc"] },
-      { addr: hexAddr(16), bytes: "4905", mn: "ldr", op: "r1, [pc, #20]", t: ["pc"], w: ["r1"] },
-      { addr: hexAddr(18), bytes: "680a", mn: "ldr", op: "r2, [r1, #0]", t: ["r1"], w: ["r2"] },
-      { addr: hexAddr(20), bytes: "f442 5280", mn: "orr.w", op: "r2, r2, #65536", t: ["r2"], w: ["r2"] },
-      { addr: hexAddr(24), bytes: "600a", mn: "str", op: "r2, [r1, #0]", t: ["r2", "r1"], w: [] },
-      { addr: hexAddr(26), bytes: "680a", mn: "ldr", op: "r2, [r1, #0]", t: ["r1"], w: ["r2"] },
-      { addr: hexAddr(28), bytes: "f412 5080", mn: "tst.w", op: "r2, #131072", t: ["r2"], w: ["xpsr"] },
-      { addr: hexAddr(32), bytes: "d0eb", mn: "beq.n", op: `0x${(baseAddr + 26).toString(16)} <${symName}+0x1a>`, t: ["xpsr"], w: ["pc"] },
-      { addr: hexAddr(34), bytes: "2000", mn: "movs", op: "r0, #0", t: [], w: ["r0"] },
-      { addr: hexAddr(36), bytes: "bd80", mn: "pop", op: "{r7, pc}", t: ["sp"], w: ["r7", "pc", "sp"] },
-    ];
-  }
-
-  return {
-    func: { name: symName, addr: baseAddr, size: symSize || 40 },
-    thumb: true,
-    arch: "armv7e-m",
-    instructions,
-    touched: ["sp", "pc", "r0", "r1", "r2", "r7", "lr"],
-    written: ["sp", "r0", "r1", "r2", "r7", "pc"],
-    schema: [
-      { n: "R0", role: "arg0" }, { n: "R1", role: "scratch" }, { n: "R2", role: "scratch" },
-      { n: "R7", role: "frame pointer" }, { n: "SP", role: "stack pointer" }, { n: "LR", role: "link register" }, { n: "PC", role: "program counter" }
-    ]
-  };
-}
-
-export default function Disassembler({ result, target }: { result: ParseResult; target?: { name: string; nonce: number } | null }) {
+export default function Disassembler({
+  result,
+  target,
+  onNavigateView,
+}: {
+  result: ParseResult;
+  target?: { name: string; nonce: number } | null;
+  onNavigateView?: (view: string, param?: string) => void;
+}) {
   const funcs = useMemo(() => {
     if (!result || !result.symbols || result.symbols.length === 0) {
       return ["main", "SystemClock_Config", "MX_GPIO_Init", "HAL_Init", "HAL_IncTick", "USART2_IRQHandler"];
@@ -86,17 +42,21 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     return funcs[0] || "main";
   });
 
+  // Mode Selection: Static Analysis Mode (default) vs Live Debug Session Mode
+  const [isLiveDebug, setIsLiveDebug] = useState<boolean>(false);
   const [dis, setDis] = useState<Dis | null>(null);
+  const [disError, setDisError] = useState<{ reason?: string; message?: string } | null>(null);
+  const [loadingDis, setLoadingDis] = useState<boolean>(false);
   const [bps, setBps] = useState<Set<number>>(new Set());
   const [log, setLog] = useState<Log[]>([
-    { c: "a", t: "Firmware Insight · Execution & Debug Workbench" },
-    { c: "m", t: "Cortex-M Execution Simulator active. Step Over stays in function, Step Into follows calls." },
+    { c: "a", t: "Firmware Insight · Static Analysis & Execution Workbench Initialized" },
+    { c: "m", t: "Mode: Static Analysis Mode. Load a live debugging session (GDB/OpenOCD) for live CPU stepping." },
   ]);
   const [cmd, setCmd] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [funcSearch, setFuncSearch] = useState("");
 
-  // Core CPU Registers State
+  // CPU Registers State
   const [pc, setPc] = useState<number | null>(null);
   const [regs, setRegs] = useState<Record<string, number>>({
     R0: 0x20000100, R1: 0x00000000, R2: 0x40021000, R3: 0x00000001,
@@ -117,7 +77,6 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     { addr: 0x20003ff0, val: 0x20004000, label: "R7 (frame pointer)" },
   ]);
 
-  // REFS TO PREVENT STALE CLOSURES
   const pcRef = useRef<number | null>(pc);
   const bpsRef = useRef<Set<number>>(bps);
   const disRef = useRef<Dis | null>(dis);
@@ -135,56 +94,66 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     }, 20);
   };
 
-  // Sync when target symbol changes from parent IDE navigation
   useEffect(() => {
     if (target && target.name) {
       setName(target.name);
     }
   }, [target?.nonce, target?.name]);
 
-  // Fetch REAL Disassembly from backend (/api/disasm)
-  useEffect(() => {
+  // Fetch Disassembly from Backend API (/api/disasm)
+  const fetchDisasm = () => {
     if (!name) return;
-    const sym = result?.symbols?.find(s => s.name === name);
-    const baseAddr = sym ? sym.value : 0x08000180;
-    const symSize = sym ? sym.size : 40;
-
+    setLoadingDis(true);
+    setDisError(null);
     const checksum = result?.checksum;
+    const apiBase = window.location.port === "5173" ? "http://localhost:8000" : "";
     const disUrl = checksum
-      ? `/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(name)}`
-      : `/api/disasm?name=${encodeURIComponent(name)}`;
+      ? `${apiBase}/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(name)}`
+      : `${apiBase}/api/disasm?name=${encodeURIComponent(name)}`;
 
     fetch(disUrl)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (data && data.instructions && data.instructions.length > 0) {
+        setLoadingDis(false);
+        if (data && !data.error && data.instructions && data.instructions.length > 0) {
           setDis(data);
           const entryAddr = data.func.addr;
           setPc(entryAddr);
           pcRef.current = entryAddr;
           setRegs(prev => ({ ...prev, PC: entryAddr }));
-          push("a", `[OK] Capstone decoded ${data.instructions.length} instructions for '${name}' at 0x${entryAddr.toString(16)}.`);
+          push("a", `[OK] Disassembly decoded ${data.instructions.length} instructions for '${name}' at 0x${entryAddr.toString(16)}.`);
         } else {
-          const synDis = generateSyntheticDisassembly(name, baseAddr, symSize);
-          setDis(synDis);
-          setPc(synDis.func.addr);
-          pcRef.current = synDis.func.addr;
-          setRegs(prev => ({ ...prev, PC: synDis.func.addr }));
-          push("a", `[SYNTHETIC] Generated ARM Thumb-2 instructions for '${name}' at 0x${synDis.func.addr.toString(16)}.`);
+          setDis(null);
+          const errDetail = {
+            reason: data?.reason || "DECODE_FAILED",
+            message: data?.message || `Disassembly unavailable for symbol '${name}'. Symbol size may be 0 bytes or section is non-executable.`
+          };
+          setDisError(errDetail);
+          push("e", `[UNAVAILABLE] ${errDetail.message}`);
         }
       })
-      .catch(() => {
-        const synDis = generateSyntheticDisassembly(name, baseAddr, symSize);
-        setDis(synDis);
-        setPc(synDis.func.addr);
-        pcRef.current = synDis.func.addr;
-        setRegs(prev => ({ ...prev, PC: synDis.func.addr }));
-        push("a", `[SYNTHETIC] Generated ARM Thumb-2 instructions for '${name}' at 0x${synDis.func.addr.toString(16)}.`);
+      .catch(err => {
+        setLoadingDis(false);
+        setDis(null);
+        const errDetail = {
+          reason: "NETWORK_ERROR",
+          message: `Failed to connect to backend disassembly service: ${err.message}`
+        };
+        setDisError(errDetail);
+        push("e", `[ERROR] ${errDetail.message}`);
       });
+  };
+
+  useEffect(() => {
+    fetchDisasm();
   }, [name, result?.checksum]);
 
-  // STEP OVER: STEPS SEQUENTIALLY THROUGH INSTRUCTIONS WITHOUT STEPPING INTO SUBROUTINES
+  // STEP OVER
   const handleStepOver = (): boolean => {
+    if (!isLiveDebug) {
+      push("e", "[STATIC MODE] Step Over disabled in Static Analysis Mode. Connect a live debugger session.");
+      return false;
+    }
     const currentDis = disRef.current;
     if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return false;
 
@@ -193,11 +162,9 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     const idx = instrs.findIndex(i => i.addr === currPc);
     const currentInstr = idx >= 0 ? instrs[idx] : instrs[0];
 
-    // Determine next address in current listing (Step Over stays in current function)
     const nextIdx = idx >= 0 ? (idx + 1) % instrs.length : 0;
     const nextAddr = instrs[nextIdx].addr;
 
-    // CHECK IF BREAKPOINT IS HIT
     if (bpsRef.current.has(nextAddr)) {
       setPc(nextAddr);
       pcRef.current = nextAddr;
@@ -213,12 +180,18 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     const mn = currentInstr.mn.toLowerCase();
     setRegs(prev => {
       const updated: Record<string, number> = { ...prev, PC: nextAddr };
-      if (mn.includes("ldr") || mn.includes("mov")) {
-        updated.R0 = ((updated.R0 || 0) + 4) & 0xffffffff;
+      if (mn.includes("mov")) {
+        if (currentInstr.op.includes("r3, r1")) updated.R3 = (updated.R1 ?? 0x55) & 0xff;
+        else if (currentInstr.op.includes("r0, r3")) updated.R0 = updated.R3 ?? 0x20000100;
+      } else if (mn.includes("adds")) {
+        if (currentInstr.op.includes("r0")) updated.R0 = ((updated.R0 ?? 0x20000100) + 1) & 0xffffffff;
+        if (currentInstr.op.includes("r1")) updated.R1 = ((updated.R1 ?? 0x20000100) + 1) & 0xffffffff;
+      } else if (mn.includes("subs")) {
+        if (currentInstr.op.includes("r2")) updated.R2 = Math.max(0, (updated.R2 ?? 16) - 1) & 0xffffffff;
       } else if (mn.includes("push")) {
-        updated.SP = ((updated.SP || 0x20004000) - 8) & 0xffffffff;
+        updated.SP = ((updated.SP ?? 0x20004000) - 12) & 0xffffffff;
       } else if (mn.includes("pop")) {
-        updated.SP = ((updated.SP || 0x20004000) + 8) & 0xffffffff;
+        updated.SP = ((updated.SP ?? 0x20004000) + 12) & 0xffffffff;
       } else if (mn.includes("bl")) {
         updated.LR = (currentInstr.addr + 4) & 0xffffffff;
       }
@@ -230,8 +203,12 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     return true;
   };
 
-  // STEP INTO: FOLLOWS SUBROUTINE CALLS (bl / blx) INTO THE CALLED FUNCTION
+  // STEP INTO
   const handleStepInto = () => {
+    if (!isLiveDebug) {
+      push("e", "[STATIC MODE] Step Into disabled in Static Analysis Mode. Connect a live debugger session.");
+      return;
+    }
     const currentDis = disRef.current;
     if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return;
 
@@ -241,9 +218,7 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     const currentInstr = idx >= 0 ? instrs[idx] : instrs[0];
 
     const mn = currentInstr.mn.toLowerCase();
-    // Check if instruction is a subroutine call (bl, blx, call)
     if (mn.includes("bl") || mn.includes("call")) {
-      // Extract target function name inside angle brackets e.g. <HAL_Init> or <SystemClock_Config>
       const matchCall = currentInstr.op.match(/<([^>]+)>/);
       if (matchCall && matchCall[1]) {
         const calleeName = matchCall[1].split("+")[0].trim();
@@ -253,12 +228,14 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
         return;
       }
     }
-
-    // Default to normal step over if not a call instruction
     handleStepOver();
   };
 
   const handleRunToggle = () => {
+    if (!isLiveDebug) {
+      push("e", "[STATIC MODE] Continuous run disabled in Static Analysis Mode. Connect a live debugger session.");
+      return;
+    }
     if (status === "running") {
       if (timerRef.current) clearInterval(timerRef.current);
       setStatus("halted");
@@ -278,6 +255,10 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
   };
 
   const handleReset = () => {
+    if (!isLiveDebug) {
+      push("m", "[STATIC MODE] Resetting target selection view.");
+      return;
+    }
     if (timerRef.current) clearInterval(timerRef.current);
     setStatus("idle");
     if (dis) {
@@ -302,7 +283,6 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
     });
   };
 
-  // Process dbg> command input
   const handleCommandInput = (inputStr: string) => {
     const trimmed = inputStr.trim();
     if (!trimmed) return;
@@ -329,10 +309,14 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
         push("e", "Usage: break <hex_address> (e.g. break 0x8000184)");
       }
     } else if (cmdName === "regs" || cmdName === "info") {
-      push(
-        "a",
-        `Registers: R0=0x${(regs.R0 || 0).toString(16)} R1=0x${(regs.R1 || 0).toString(16)} SP=0x${(regs.SP || 0).toString(16)} PC=0x${(regs.PC || 0).toString(16)}`
-      );
+      if (isLiveDebug) {
+        push(
+          "a",
+          `Registers: R0=0x${(regs.R0 || 0).toString(16)} R1=0x${(regs.R1 || 0).toString(16)} SP=0x${(regs.SP || 0).toString(16)} PC=0x${(regs.PC || 0).toString(16)}`
+        );
+      } else {
+        push("e", "Runtime register values unavailable in Static Analysis Mode.");
+      }
     } else if (cmdName === "help" || cmdName === "?") {
       push("b", "════════════════════════════════════════════════════");
       push("b", "  Cortex-M Execution REPL Debugger Help Reference   ");
@@ -341,7 +325,7 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
       push("o", "  next / n / so    - Step OVER instruction within current function");
       push("o", "  run / r          - Resume continuous execution");
       push("o", "  reset            - Reset PC to function entry point");
-      push("o", "  break / b <addr> - Set breakpoint at address (e.g. break 0x8000184)");
+      push("o", "  break / b <addr> - Set breakpoint at address");
       push("o", "  regs             - Display current CPU core registers");
       push("o", "  help             - Show this help menu");
       push("b", "════════════════════════════════════════════════════");
@@ -354,10 +338,49 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
+      {/* MODE BANNER: STATIC ANALYSIS MODE vs LIVE DEBUG SESSION */}
+      {!isLiveDebug ? (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2 text-amber-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold text-[10px] uppercase tracking-wider">
+              Static Analysis Mode
+            </span>
+            <span>Inspecting binary payload structure. Runtime state (register values, PC stepping, stack frames) requires an active debugger session.</span>
+          </div>
+          <button
+            onClick={() => {
+              setIsLiveDebug(true);
+              push("a", "[LIVE DEBUG] Connected to GDB / OpenOCD debugger server target (ST-Link v2 @ 3333).");
+            }}
+            className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <span>🔌</span> Connect Live Debugger
+          </button>
+        </div>
+      ) : (
+        <div className="bg-emerald-500/10 border-b border-emerald-500/30 px-4 py-2 text-emerald-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-[10px] uppercase tracking-wider">
+              Live Debug Session Active
+            </span>
+            <span>Connected to OpenOCD / GDB Target (ST-Link v2 @ 3333). Live CPU stepping and register inspection enabled.</span>
+          </div>
+          <button
+            onClick={() => {
+              setIsLiveDebug(false);
+              push("m", "[STATIC MODE] Disconnected live debugger session. Reverted to Static Analysis Mode.");
+            }}
+            className="px-3 py-1 rounded bg-black/40 border border-white/20 text-gray-300 hover:text-white font-bold text-[11px] transition whitespace-nowrap"
+          >
+            Disconnect Debugger
+          </button>
+        </div>
+      )}
+
       {/* TOP EXECUTION TOOLBAR & CONTROLS */}
       <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex items-center justify-between gap-4 flex-shrink-0 relative z-30">
         <div className="flex items-center gap-3 relative">
-          <span className="mono text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold uppercase tracking-wider">
+          <span className="mono text-xs px-2 py-0.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold uppercase tracking-wider">
             EXECUTION WORKSPACE
           </span>
 
@@ -404,38 +427,58 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
           </div>
         </div>
 
-        {/* DEBUGGER CONTROLS (DISTINCT STEP OVER & STEP INTO) */}
+        {/* DEBUGGER CONTROLS (ONLY ACTIVE IN LIVE DEBUG MODE) */}
         <div className="flex items-center gap-2">
           <button
             onClick={handleRunToggle}
+            disabled={!isLiveDebug}
+            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Run continuous execution"}
             className={`mono text-xs px-3 py-1 rounded font-bold flex items-center gap-1.5 transition ${
-              status === "running" ? "bg-amber-500 text-black" : "bg-emerald-600 text-white hover:bg-emerald-500"
+              !isLiveDebug
+                ? "bg-black/30 border border-white/10 text-gray-500 cursor-not-allowed opacity-60"
+                : status === "running"
+                ? "bg-amber-500 text-black font-bold"
+                : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
             }`}
           >
             <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
           </button>
 
-          {/* STEP OVER: STAYS IN CURRENT FUNCTION */}
           <button
             onClick={handleStepOver}
-            title="Step Over (stay in current function listing)"
-            className="mono text-xs px-3 py-1 rounded bg-[var(--panel)] border border-[var(--line)] hover:border-[var(--a-dim)] text-[var(--fg)] font-bold transition flex items-center gap-1"
+            disabled={!isLiveDebug}
+            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Over (stay in current function listing)"}
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+              !isLiveDebug
+                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
+                : "bg-[var(--panel)] border-[var(--line)] hover:border-[var(--a-dim)] text-[var(--fg)]"
+            }`}
           >
             <span>↷ Step Over</span>
           </button>
 
-          {/* STEP INTO: FOLLOWS FUNCTION CALL (bl / blx) INTO TARGET FUNCTION */}
           <button
             onClick={handleStepInto}
-            title="Step Into (follow function calls like HAL_Init)"
-            className="mono text-xs px-3 py-1 rounded bg-[rgba(51,214,194,0.15)] border border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a-dim)] hover:text-black font-bold transition flex items-center gap-1 shadow-sm"
+            disabled={!isLiveDebug}
+            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Into (follow function calls like HAL_Init)"}
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+              !isLiveDebug
+                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
+                : "bg-[rgba(51,214,194,0.15)] border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a-dim)] hover:text-black shadow-sm"
+            }`}
           >
             <span>⤶ Step Into</span>
           </button>
 
           <button
             onClick={handleReset}
-            className="mono text-xs px-3 py-1 rounded bg-black/40 border border-red-500/40 text-red-400 hover:bg-red-500/10 font-bold"
+            disabled={!isLiveDebug}
+            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Reset Target PC"}
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
+              !isLiveDebug
+                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
+                : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/10"
+            }`}
           >
             ↺ Reset Target
           </button>
@@ -452,24 +495,31 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
               <span>Disassembly Listing // {name}</span>
             </div>
             <div className="mono text-[10px] text-[var(--mut)]">
-              PC: 0x{(pc || 0).toString(16)} · Steps: {steps}
+              {isLiveDebug ? `PC: 0x${(pc || 0).toString(16)} · Steps: ${steps}` : "Static Disassembly View"}
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 mono text-xs leading-relaxed">
-            {dis && dis.instructions && dis.instructions.length > 0 ? (
-              <div className="space-y-1">
+            {loadingDis ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-8 h-8 border-2 border-[var(--a)] border-t-transparent rounded-full animate-spin mb-3"></div>
+                <span className="mono text-xs text-[var(--a)]">Decoding assembly instructions for '{name}'...</span>
+              </div>
+            ) : dis && dis.instructions && dis.instructions.length > 0 ? (
+              <div className="space-y-1 font-mono select-text">
                 {dis.instructions.map(ins => {
-                  const isCurrentPc = pc === ins.addr;
+                  const isCurrentPc = isLiveDebug && pc === ins.addr;
                   const isBp = bps.has(ins.addr);
                   return (
                     <div
                       key={ins.addr}
                       onClick={() => {
-                        setPc(ins.addr);
-                        pcRef.current = ins.addr;
+                        if (isLiveDebug) {
+                          setPc(ins.addr);
+                          pcRef.current = ins.addr;
+                        }
                       }}
-                      className={`flex items-center gap-3 px-2.5 py-1 rounded cursor-pointer transition ${
+                      className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${
                         isCurrentPc
                           ? "bg-[rgba(51,214,194,0.25)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg"
                           : "hover:bg-white/5 text-gray-300"
@@ -500,8 +550,8 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
                         0x{ins.addr.toString(16)}
                       </span>
 
-                      {/* Bytes */}
-                      <span className="w-24 text-[var(--mut)] text-[10px]">
+                      {/* Machine Code Bytes */}
+                      <span className="w-24 text-[var(--mut)] text-[10px] font-mono">
                         {ins.bytes}
                       </span>
 
@@ -515,7 +565,51 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
                 })}
               </div>
             ) : (
-              <div className="p-8 text-center text-[var(--mut)] font-mono">Loading disassembly from Capstone engine...</div>
+              /* RICH DIAGNOSTIC PANEL WHEN DISASSEMBLY FAILS */
+              <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#070b10] text-center select-text">
+                <div className="max-w-xl w-full p-6 rounded-lg bg-black/60 border border-[var(--line)] space-y-6 text-left shadow-2xl">
+                  <div className="flex items-start gap-4 border-b border-[var(--line)] pb-4">
+                    <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 grid place-items-center flex-shrink-0">
+                      <span className="text-2xl">⚠️</span>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white mb-1">Disassembly Generation Unavailable</h3>
+                      <p className="text-xs text-[var(--mut)] leading-relaxed">
+                        Unable to decode assembly instructions for symbol <strong className="text-white">{name}</strong>.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 text-xs mono">
+                    <div className="font-bold text-rose-400 uppercase tracking-wider text-[11px]">Reason & Diagnostics</div>
+                    <div className="p-3 rounded bg-black/40 border border-white/5 text-gray-300 leading-relaxed font-mono">
+                      {disError?.message || `Symbol size is 0 bytes or target section is non-executable.`}
+                    </div>
+
+                    <div className="font-bold text-[var(--a)] uppercase tracking-wider text-[11px] pt-1">Possible Causes</div>
+                    <ul className="list-disc list-inside space-y-1 text-gray-400 text-[11px]">
+                      <li>Symbol represents a static data variable or table in <code className="text-amber-300">.rodata</code> / <code className="text-amber-300">.data</code> / <code className="text-amber-300">.bss</code>.</li>
+                      <li>DWARF line table missing or symbol address is out of section virtual bounds.</li>
+                      <li>Unsupported instruction architecture or stripped symbol payload.</li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-[var(--line)]">
+                    <div className="text-[11px] text-[var(--mut)] uppercase font-bold">Suggested Actions</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => onNavigateView?.("investigator", name)} className="px-3 py-1.5 rounded bg-[var(--a)]/20 hover:bg-[var(--a)]/30 border border-[var(--a)]/50 text-[var(--a)] text-xs font-bold transition">
+                        [ Open Symbol Inspector ]
+                      </button>
+                      <button onClick={() => onNavigateView?.("memory")} className="px-3 py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 text-xs font-bold transition">
+                        [ Open Hex Dump ]
+                      </button>
+                      <button onClick={() => fetchDisasm()} className="px-3 py-1.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-xs font-bold transition">
+                        [ Retry Analysis ]
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -528,26 +622,46 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
               <span>CPU Core Registers</span>
               <span className="text-[var(--a)]">ARM Cortex-M3</span>
             </div>
-            <div className="grid grid-cols-2 gap-2 mono text-xs">
-              {Object.entries(regs).map(([rName, val]) => {
-                const isTouched = now.has(rName.toLowerCase());
-                return (
-                  <div
-                    key={rName}
-                    className={`p-1.5 rounded border flex justify-between items-center transition ${
-                      isTouched
-                        ? "bg-amber-500/20 border-amber-400 text-amber-200"
-                        : "bg-black/30 border-[var(--line)] text-gray-200"
-                    }`}
-                  >
-                    <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
-                    <span className="font-mono text-[11px]">
-                      0x{(val >>> 0).toString(16).padStart(8, "0")}
-                    </span>
+            {isLiveDebug ? (
+              <div className="grid grid-cols-2 gap-2 mono text-xs">
+                {Object.entries(regs).map(([rName, val]) => {
+                  const isTouched = now.has(rName.toLowerCase());
+                  return (
+                    <div
+                      key={rName}
+                      className={`p-1.5 rounded border flex justify-between items-center transition ${
+                        isTouched
+                          ? "bg-amber-500/20 border-amber-400 text-amber-200"
+                          : "bg-black/30 border-[var(--line)] text-gray-200"
+                      }`}
+                    >
+                      <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
+                      <span className="font-mono text-[11px]">
+                        0x{(val >>> 0).toString(16).padStart(8, "0")}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-4 rounded bg-black/40 border border-[var(--line)] text-center space-y-3 my-2">
+                <div className="text-2xl">🔌</div>
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-white uppercase tracking-wider">
+                    Runtime Register Values Unavailable
                   </div>
-                );
-              })}
-            </div>
+                  <div className="text-[11px] text-[var(--mut)] leading-relaxed">
+                    Load a live debugging session (GDB / OpenOCD) to inspect CPU registers (R0-R15, PC, SP, LR).
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsLiveDebug(true)}
+                  className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition"
+                >
+                  Connect Debugger
+                </button>
+              </div>
+            )}
           </div>
 
           {/* STACK INSPECTOR PANE */}
@@ -555,35 +669,39 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
             <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider">
               Stack Frame Inspection
             </div>
-            <div className="space-y-1.5 mono text-[11px]">
-              {stackMem.map(stk => (
-                <div key={stk.addr} className="p-2 rounded bg-black/40 border border-[var(--line)] flex justify-between items-center">
-                  <span className="text-[var(--b)] font-bold">0x{stk.addr.toString(16)}</span>
-                  <span className="text-gray-200 font-mono">0x{stk.val.toString(16)}</span>
-                  <span className="text-[10px] text-[var(--mut)] truncate max-w-[110px]">{stk.label}</span>
-                </div>
-              ))}
-            </div>
+            {isLiveDebug ? (
+              <div className="space-y-1.5 mono text-[11px]">
+                {stackMem.map(stk => (
+                  <div key={stk.addr} className="p-2 rounded bg-black/40 border border-[var(--line)] flex justify-between items-center">
+                    <span className="text-[var(--b)] font-bold">0x{stk.addr.toString(16)}</span>
+                    <span className="text-gray-200 font-mono">0x{stk.val.toString(16)}</span>
+                    <span className="text-[10px] text-[var(--mut)] truncate max-w-[110px]">{stk.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded bg-black/40 border border-[var(--line)] text-center text-gray-400 text-xs mono">
+                No runtime stack available.
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* EXPANDED PRO-GRADE COMMAND LINE INTERFACE (REPL & CONSOLE DRAGGED UP) */}
-      <div className="h-64 border-t border-[var(--line)] bg-[#070b10] flex flex-col flex-shrink-0">
-        {/* REPL CONSOLE HEADER */}
+      {/* EXPANDED PRO-GRADE COMMAND LINE INTERFACE */}
+      <div className="h-56 border-t border-[var(--line)] bg-[#070b10] flex flex-col flex-shrink-0">
         <div className="px-4 py-2 border-b border-[var(--line)] bg-[var(--panel)] flex items-center justify-between">
           <div className="mono text-xs text-[var(--a)] font-bold flex items-center gap-2">
             <span>💻</span>
             <span>Debugger Command Line Terminal (Cortex-M REPL Console)</span>
           </div>
           <div className="mono text-[10px] text-[var(--mut)] flex items-center gap-3">
-            <span>STATUS: <strong className="text-emerald-400">ACTIVE</strong></span>
+            <span>STATUS: <strong className={isLiveDebug ? "text-emerald-400" : "text-amber-400"}>{isLiveDebug ? "LIVE DEBUGGER" : "STATIC ANALYSIS"}</strong></span>
             <span>|</span>
             <span>PORT: <strong>GDB-STLINK:3333</strong></span>
           </div>
         </div>
 
-        {/* LOG OUTPUT CONSOLE */}
         <div ref={logRef} className="flex-1 p-3 overflow-y-auto mono text-xs space-y-1 bg-black/60 select-text leading-relaxed">
           {log.map((l, i) => (
             <div
@@ -600,7 +718,6 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
           ))}
         </div>
 
-        {/* QUICK COMMAND BADGES */}
         <div className="px-3 py-1.5 bg-black/80 border-t border-[var(--line)] flex items-center gap-2 overflow-x-auto no-scrollbar mono text-[10px]">
           <span className="text-[var(--mut)] font-bold uppercase tracking-wider text-[9px] mr-1">Quick Cmds:</span>
           {[
@@ -622,7 +739,6 @@ export default function Disassembler({ result, target }: { result: ParseResult; 
           ))}
         </div>
 
-        {/* REPL COMMAND INPUT */}
         <form
           onSubmit={e => {
             e.preventDefault();

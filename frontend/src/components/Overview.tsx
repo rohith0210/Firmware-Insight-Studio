@@ -14,11 +14,20 @@ function Gauge({ label, used, cap, color }: { label: string; used: number; cap: 
   );
 }
 export default function Overview({ result, device }: { result: ParseResult; device: Device }) {
-  const usedF = usedIn(device, result.sections, ["flash", "xip"]), usedR = usedIn(device, result.sections, ["ram", "ccm"]);
-  const capF = device.regions.filter(r => r.kind === "flash" || r.kind === "xip").reduce((a, r) => a + r.size, 0);
-  const capR = device.regions.filter(r => r.kind === "ram" || r.kind === "ccm").reduce((a, r) => a + r.size, 0);
-  const top = result.symbols.filter(x => x.size > 0).slice(0, 10); const max = top[0]?.size || 1;
+  const fallbackF = (result.summary[".text"] || 0) + (result.summary[".rodata"] || 0);
+  const fallbackR = (result.summary[".data"] || 0) + (result.summary[".bss"] || 0);
+  const inRegF = usedIn(device, result.sections, ["flash", "xip"]);
+  const inRegR = usedIn(device, result.sections, ["ram", "ccm"]);
+  const usedF = inRegF > 0 ? inRegF : fallbackF;
+  const usedR = inRegR > 0 ? inRegR : fallbackR;
+
+  const capF = device.regions.filter(r => r.kind === "flash" || r.kind === "xip").reduce((a, r) => a + r.size, 0) || device.flashSize || (usedF > 0 ? usedF : 1);
+  const capR = device.regions.filter(r => r.kind === "ram" || r.kind === "ccm").reduce((a, r) => a + r.size, 0) || device.sramSize || (usedR > 0 ? usedR : 1);
+
+  const top = [...(result.symbols || [])].filter(x => x && x.size > 0).sort((a, b) => b.size - a.size).slice(0, 10);
+  const max = top[0]?.size || 1;
   const Spec = ({ k, v, c }: { k: string; v: string; c?: string }) => (<div className="row"><span className="k">{k}</span><span className={`v ${c || ""}`}>{v}</span></div>);
+  const isMCU = device.mcu !== false;
   return (
     <div className="space-y-5">
       <div className="grid lg:grid-cols-3 gap-5">
@@ -40,8 +49,8 @@ export default function Overview({ result, device }: { result: ParseResult; devi
             <Spec k="Largest Symbol" v={`${result.largest?.name || "—"} · ${((result.largest?.size || 0) / 1024).toFixed(2)} KB`} c="b" />
           </div>
           <div className="grid sm:grid-cols-2 gap-4 mt-4">
-            <Gauge label="flash utilization" used={usedF} cap={capF || usedF} color="var(--a)" />
-            <Gauge label="ram utilization" used={usedR} cap={capR || usedR} color="var(--b)" />
+            <Gauge label={isMCU ? "flash utilization" : "code (.text / .rodata)"} used={usedF} cap={capF} color="var(--a)" />
+            <Gauge label={isMCU ? "ram utilization" : "data (.data / .bss)"} used={usedR} cap={capR} color="var(--b)" />
           </div>
         </div>
       </div>

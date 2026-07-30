@@ -1,7 +1,13 @@
 import { useState } from "react";
+
 type Sec = { name: string; type: string; addr: number; size: number };
 type Sym = { name: string; value: number; size: number; type: string; bind: string; section: string };
-function moduleOf(n: string) { const p = n.split("_"); if (p[0] === "HAL" && p.length > 1) return p[0] + "_" + p[1]; return p.length > 1 ? p[0] : n; }
+function moduleOf(n: any) {
+  if (!n || typeof n !== "string") return "unknown";
+  const p = n.split("_");
+  if (p[0] === "HAL" && p.length > 1) return p[0] + "_" + p[1];
+  return p.length > 1 ? p[0] : n;
+}
 export default function SectionTable({ sections, symbols, onSectionClick, selectedSection }: {
   sections: Sec[]; symbols: Sym[]; onSectionClick?: (s: string | null) => void; selectedSection?: string | null;
 }) {

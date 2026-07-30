@@ -25,6 +25,7 @@ import InspectorPanel from "./components/InspectorPanel";
 import { detectDevice, DB } from "./utils/devices";
 
 import DeviceExplorer from "./components/DeviceExplorer";
+import GlobalSearchModal from "./components/GlobalSearchModal";
 
 export type ParseResult = {
   filename: string; arch: string; entry: string;
@@ -93,7 +94,20 @@ async function parseFile(file: File): Promise<ParseResult> {
   const form = new FormData(); form.append("file", file);
   const res = await fetch("http://localhost:8000/api/upload", { method: "POST", body: form });
   if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
-  return res.json();
+  const data = await res.json();
+  return {
+    ...data,
+    sections: data.sections || [],
+    symbols: data.symbols || [],
+    summary: data.summary || {},
+    treemap_data: data.treemap_data || [],
+    call_graph: data.call_graph || { nodes: [], edges: [] },
+    dead_code: data.dead_code || { items: [], reclaimable: 0, referenced_count: 0 },
+    objects: data.objects || [],
+    isrs: data.isrs || [],
+    peripherals: data.peripherals || [],
+    build_config: data.build_config || {},
+  };
 }
 
 type Toast = { id: number; message: string; type: "info" | "success" | "warning" | "error" };
@@ -109,6 +123,7 @@ export default function App() {
   const [deviceOverride, setDeviceOverride] = useState<string>("");
   const [disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<any | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [, setCallGraphTarget] = useState<{ symbol: string; mode: "callers" | "callees" | "symbol" } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [history, setHistory] = useState<Snap[]>(() => { try { return JSON.parse(localStorage.getItem(TL_KEY) || "[]"); } catch { return []; } });
@@ -123,7 +138,16 @@ export default function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
   useEffect(() => { localStorage.setItem(TL_KEY, JSON.stringify(history)); }, [history]);
-  const device = useMemo(() => result ? (deviceOverride && DB[deviceOverride] ? DB[deviceOverride] : detectDevice(result)) : null, [result, deviceOverride]);
+  const device = useMemo(() => {
+    if (!result) return null;
+    try {
+      const d = deviceOverride && DB[deviceOverride] ? DB[deviceOverride] : detectDevice(result);
+      return d || DB.generic_cortex_m || DB.stm32f103c8;
+    } catch (e) {
+      console.warn("Device detection fallback triggered:", e);
+      return DB.generic_cortex_m || DB.stm32f103c8;
+    }
+  }, [result, deviceOverride]);
 
   useEffect(() => {
     if (!result) return;
@@ -138,10 +162,12 @@ export default function App() {
     setSelectedSection(null);
     setResultB(null);
     setDeviceOverride("");
-    setSelectedSymbol(null);
     setView("overview");
     try {
-      setResult(await parseFile(file));
+      const parsed = await parseFile(file);
+      setResult(parsed);
+      const defaultSym = parsed.symbols.find((s: any) => s.name === "main") || parsed.symbols.find((s: any) => s.type === "STT_FUNC" || s.section === ".text") || parsed.symbols[0] || null;
+      setSelectedSymbol(defaultSym);
       addToast("Firmware binary parsed successfully", "success");
     } catch (e: any) {
       setError(e.message);
@@ -195,9 +221,10 @@ export default function App() {
   }, [addToast]);
 
   const handleViewSource = useCallback((symName: string) => {
-    setView("source");
-    addToast(`Loading source context for ${symName}`, "info");
-  }, [addToast]);
+    if (symName) handleSelectSymbol(symName);
+    setView("investigator");
+    addToast(`Opening Code Investigator for ${symName}`, "info");
+  }, [addToast, handleSelectSymbol]);
 
   const handleHighlightSection = useCallback((secName: string) => {
     setSelectedSection(secName);
@@ -249,10 +276,36 @@ export default function App() {
       case "objects":
         return <ObjectFiles result={result} />;
       case "source":
-        return <SourceViewer result={result} />;
+        return (
+          <SourceViewer
+            result={result}
+            targetSymbol={selectedSymbol}
+            onNavigateView={(target, param) => {
+              if (target === "debug" && param) handleOpenAssembly(param);
+              else if (target === "investigator" && param) {
+                handleSelectSymbol(param);
+                setView("investigator");
+              } else setView(target as View);
+            }}
+          />
+        );
       case "callgraph":
         return result.call_graph && result.call_graph.nodes.length > 0 ? (
-          <CallGraph data={result.call_graph} result={result} device={device!} />
+          <CallGraph
+            data={result.call_graph}
+            result={result}
+            device={device!}
+            onDisassemble={handleOpenAssembly}
+            onShowSection={(sec) => { setSelectedSection(sec); setView("sections"); }}
+            onOpenObject={() => setView("objects")}
+            onNavigate={(target, param) => {
+              if (target === "debug" && param) handleOpenAssembly(param);
+              else if ((target === "investigator" || target === "source") && param) {
+                handleSelectSymbol(param);
+                setView("investigator");
+              } else setView(target as View);
+            }}
+          />
         ) : (
           <Locked name="Call Graph" note="No function symbols resolved in this binary." />
         );
@@ -305,7 +358,7 @@ export default function App() {
       <div className="shell" style={{ height: "100vh", overflow: "hidden" }}>
         <Sidebar view={view} setView={setView} hasResult={!!result} />
         <div className="main" style={{ overflow: "hidden" }}>
-          <Ribbon title={TITLES[view] || view} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} />
+          <Ribbon title={TITLES[view] || view} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} onOpenSearch={() => setIsSearchOpen(true)} />
           <div className="flex flex-1" style={{ minHeight: 0 }}>
             <div className="view flex-1 overflow-auto" style={{ minWidth: 0 }} key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
               {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
@@ -329,6 +382,19 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      <GlobalSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        result={result}
+        device={device}
+        onNavigate={(targetView, param) => {
+          setView(targetView);
+          if (param) handleOpenAssembly(param);
+          addToast(`Navigated to ${TITLES[targetView] || targetView}`, "info");
+        }}
+        onSelectSymbol={handleSelectSymbol}
+      />
 
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map(t => (

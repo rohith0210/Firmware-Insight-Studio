@@ -6,11 +6,16 @@ import "reactflow/dist/style.css";
 import type { ParseResult } from "../App";
 import type { Device } from "../utils/devices";
 
-type CG = { nodes: Array<{ id: string; label: string; type: string }>; edges: Array<{ source: string; target: string; animated?: boolean }> };
-type LayoutMode = "hierarchy" | "architecture" | "dependency" | "radial";
+type CG = {
+  nodes: Array<{ id: string; label: string; type: string }>;
+  edges: Array<{ source: string; target: string; animated?: boolean }>;
+};
+
+type GraphMode = "calls" | "startup" | "isr" | "task" | "driver" | "library";
+type LayoutMode = "hierarchical" | "radial" | "force" | "orthogonal";
 type InspectorTab = "Overview" | "Memory" | "Calls" | "Metrics";
-type BottomTab = "Trace" | "Timeline" | "Events" | "Warnings" | "Statistics" | "Console" | "Build Compare";
-type NodeCategory = "Application" | "Startup" | "HAL/Drivers" | "Middleware" | "Interrupts" | "Runtime" | "Libraries";
+type BottomTab = "Trace" | "Architecture" | "Vectors" | "Analytics";
+type NodeCategory = "Application" | "Startup" | "Drivers" | "RTOS/Tasks" | "Interrupts" | "Runtime" | "Libraries";
 
 type FunctionData = {
   name: string;
@@ -22,62 +27,66 @@ type FunctionData = {
   stackEstimate: string;
   icon: string;
   subtitle: string;
+  callersCount: number;
+  calleesCount: number;
+  riskScore: number;
 };
 
 type RenderNode = Node<FunctionData>;
 type RenderEdge = Edge;
-
 type TraceEvent = { ts: number; message: string; level: "info" | "action" | "warning" };
 
-const CATEGORY_ORDER: NodeCategory[] = ["Startup", "HAL/Drivers", "Middleware", "Application", "Libraries", "Runtime", "Interrupts"];
 const CATEGORY_META: Record<NodeCategory, { accent: string; fill: string; label: string; icon: string }> = {
-  Application: { accent: "#3ddbd8", fill: "rgba(61,219,216,.1)", label: "Application", icon: "📡" },
-  Startup: { accent: "#b48df7", fill: "rgba(180,141,247,.12)", label: "Startup", icon: "🚀" },
-  "HAL/Drivers": { accent: "#f3af41", fill: "rgba(243,175,65,.12)", label: "HAL / Driver", icon: "⚙" },
-  Middleware: { accent: "#7fa9ff", fill: "rgba(127,169,255,.12)", label: "Middleware", icon: "🧩" },
-  Interrupts: { accent: "#f16172", fill: "rgba(241,97,114,.12)", label: "Interrupt", icon: "⚡" },
-  Runtime: { accent: "#8d99a8", fill: "rgba(141,153,168,.12)", label: "Runtime", icon: "📦" },
-  Libraries: { accent: "#73c67c", fill: "rgba(115,198,124,.12)", label: "Library", icon: "📚" },
+  Application: { accent: "#3ddbd8", fill: "rgba(61,219,216,.12)", label: "Application", icon: "📡" },
+  Startup: { accent: "#b48df7", fill: "rgba(180,141,247,.14)", label: "Startup / Boot", icon: "🚀" },
+  Drivers: { accent: "#f3af41", fill: "rgba(243,175,65,.14)", label: "Driver / HAL", icon: "⚙" },
+  "RTOS/Tasks": { accent: "#7fa9ff", fill: "rgba(127,169,255,.14)", label: "RTOS / Task", icon: "🧩" },
+  Interrupts: { accent: "#f16172", fill: "rgba(241,97,114,.14)", label: "Interrupt / Vector", icon: "⚡" },
+  Runtime: { accent: "#8d99a8", fill: "rgba(141,153,168,.14)", label: "C Runtime", icon: "📦" },
+  Libraries: { accent: "#73c67c", fill: "rgba(115,198,124,.14)", label: "Library / Middleware", icon: "📚" },
 };
 
-const SEARCH_FILTERS = ["all", "startup", "hal", "middleware", "app", "runtime", "interrupts"] as const;
-const SEARCH_FILTER_REGEX: Record<string, RegExp> = {
-  all: /.*/i,
-  startup: /^(Reset_Handler|reset_handler|SystemInit|main|_start|__libc_start_main|crt0|.*Vector$|.*IRQHandler)$/i,
-  hal: /^(HAL|LL|BSP)_|(?:GPIO|UART|USART|SPI|I2C|ADC|DAC|DMA|TIM|USB|CAN|ETH)_[A-Za-z]/i,
-  middleware: /(FreeRTOS|vTask|xTask|osThread|cmsis_os|lwip|tcp_|udp_|mqtt|mbedtls|f_open|f_read|fatfs|usb_device)/i,
-  app: /^(?!.*(HAL_|LL_|BSP_|FreeRTOS|vTask|xTask|osThread|cmsis_os|lwip|tcp_|udp_|mqtt|mbedtls|f_open|f_read|fatfs|usb_device|Reset_Handler|SystemInit|main|_start|__libc_start_main|crt0|.*Vector$|.*IRQHandler)).+/i,
-  runtime: /^(?:__|_aeabi|memcpy|memset|strlen|strcpy|malloc|free|abort|exit)/i,
-  interrupts: /IRQ|IRQHandler|IRQn|Handler$/i,
+// Architecture-Agnostic ISA Detection
+const detectArchitecture = (result: ParseResult, device?: Device): string => {
+  const raw = `${result.arch} ${device?.architecture || ""} ${result.toolchain}`.toLowerCase();
+  if (raw.includes("cortex-m") || raw.includes("armv7-m") || raw.includes("armv6-m") || raw.includes("armv8-m")) return "ARM Cortex-M";
+  if (raw.includes("cortex-a") || raw.includes("aarch64") || raw.includes("armv7-a")) return "ARM Cortex-A";
+  if (raw.includes("riscv") || raw.includes("rv32") || raw.includes("rv64")) return "RISC-V (RV32/RV64)";
+  if (raw.includes("xtensa") || raw.includes("esp32") || raw.includes("esp8266")) return "Xtensa (ESP32)";
+  if (raw.includes("avr") || raw.includes("atmega") || raw.includes("attiny")) return "AVR (8-bit)";
+  if (raw.includes("8051") || raw.includes("mcs-51") || raw.includes("c51")) return "Intel 8051";
+  if (raw.includes("x86") || raw.includes("amd64") || raw.includes("linux")) return "Linux x86/x64";
+  return result.arch || "Generic Microcontroller";
 };
 
-const inferCategory = (label: string): NodeCategory => {
-  if (/IRQ|IRQHandler|Handler$/i.test(label)) return "Interrupts";
-  if (/^(Reset_Handler|reset_handler|SystemInit|main|_start|__libc_start_main|crt0|.*Vector$|.*IRQHandler)$/i.test(label)) return "Startup";
-  if (/^(HAL|LL|BSP)_|(?:GPIO|UART|USART|SPI|I2C|ADC|DAC|DMA|TIM|USB|CAN|ETH)_[A-Za-z]/i.test(label)) return "HAL/Drivers";
-  if (/(FreeRTOS|vTask|xTask|osThread|cmsis_os|lwip|tcp_|udp_|mqtt|mbedtls|f_open|f_read|fatfs|usb_device)/i.test(label)) return "Middleware";
-  if (/(mbedtls|libc|libm|__libc|fopen|fread|printf|scanf|snprintf|vsnprintf)/i.test(label)) return "Libraries";
-  if (/^(__|_aeabi|memcpy|memset|strlen|strcpy|malloc|free|abort|exit)/i.test(label)) return "Runtime";
+// Architecture-Agnostic Category Classification
+const inferAgnosticCategory = (name: string): NodeCategory => {
+  // Interrupts & Exceptions across Cortex-M, RISC-V, Xtensa, AVR, 8051
+  if (/IRQ|IRQHandler|Handler$|ISR_|__vector_|trap_vector|_vector$/i.test(name)) return "Interrupts";
+  
+  // Entry & Boot sequence routines across Linux, RTOS, ARM, RISC-V, Xtensa, AVR
+  if (/^(Reset_Handler|reset_handler|SystemInit|_start|__libc_start_main|crt0|main|app_main|board_init|setup_arch|start_kernel|init_hart|__init)$/i.test(name)) return "Startup";
+
+  // RTOS Task Creation & Kernel Interfacing (FreeRTOS, Zephyr, ThreadX, VxWorks, Pthreads)
+  if (/(FreeRTOS|vTask|xTask|k_thread|tx_thread|pthread|osThread|cmsis_os|vTaskStartScheduler|taskSpawn)/i.test(name)) return "RTOS/Tasks";
+
+  // Peripheral Drivers & Hardware Abstraction
+  if (/^(HAL_|LL_|BSP_|esp_|avr_|nrfx_|(?:GPIO|UART|USART|SPI|I2C|ADC|DAC|DMA|TIM|USB|CAN|ETH|TWIM|PWM)_[A-Za-z])/i.test(name)) return "Drivers";
+
+  // Shared Libraries, Middleware, Network, Cryptography
+  if (/(mbedtls|zlib|libc|libm|__libc|fopen|fread|printf|scanf|snprintf|vsnprintf|lwip|tcp_|udp_|mqtt|fatfs|usb_device)/i.test(name)) return "Libraries";
+
+  // C Runtime Helpers
+  if (/^(__|_aeabi|memcpy|memset|strlen|strcpy|malloc|free|abort|exit|__do_copy_data|__do_clear_bss)/i.test(name)) return "Runtime";
+
   return "Application";
 };
 
-const inferModule = (name: string) => {
-  if (/^(HAL|LL|BSP)_/.test(name)) return name.split("_").slice(0, 2).join("_");
-  if (/^USART|^GPIO|^SPI|^I2C|^ADC|^DAC|^DMA|^TIM|^USB|^CAN|^ETH/.test(name)) return name.split("_")[0];
-  return "app";
-};
-
-const summarizePurpose = (label: string, category: NodeCategory) => {
-  if (label === "memset" || label.includes("memset") || label.includes("memcpy")) {
-    return "C Runtime Helper: Standard memory-fill / memory-copy routine generated by GCC to zero-initialize BSS buffers and structure data.";
-  }
-  if (category === "Startup") return "Firmware boot and reset transition path leading into main.";
-  if (category === "Interrupts") return "Hardware interrupt entry points and IRQ dispatch for real-time events.";
-  if (category === "HAL/Drivers") return "Peripheral abstraction and low-level hardware service routines.";
-  if (category === "Middleware") return "OS, comms, and middleware operations that bridge firmware and services.";
-  if (category === "Libraries") return "Shared runtime or standard library helpers used across firmware.";
-  if (category === "Runtime") return "Runtime support helpers used by the firmware execution chain.";
-  return `Application logic for ${label.replace(/_/g, ".")}.`;
+const inferModule = (name: any) => {
+  if (!name || typeof name !== "string") return "core";
+  if (name.includes("_")) return name.split("_")[0];
+  if (name.includes(".")) return name.split(".")[0];
+  return "core";
 };
 
 const formatBytes = (bytes: number) => {
@@ -87,65 +96,30 @@ const formatBytes = (bytes: number) => {
 };
 
 const stackEstimate = (size: number) => {
-  if (!size) return "unknown";
+  if (!size) return "≤32 B";
   if (size <= 64) return "≤32 B";
   if (size <= 256) return "32-128 B";
   if (size <= 1024) return "128-512 B";
   return ">512 B";
 };
 
-const nodeHeightFromStack = (stack: string) => {
-  switch (stack) {
-    case "≤32 B": return 64;
-    case "32-128 B": return 72;
-    case "128-512 B": return 82;
-    case ">512 B": return 94;
-    default: return 58;
-  }
+const calculateRiskScore = (size: number, callers: number, callees: number) => {
+  let score = 10;
+  if (size > 1024) score += 30;
+  else if (size > 256) score += 15;
+  if (callees > 6) score += 25;
+  if (callers > 8) score += 20;
+  if (callers === 0 && callees === 0) score += 15;
+  return Math.min(99, score);
 };
 
-const defaultSymbol = { name: "unknown", value: 0, size: 0, type: "unknown", bind: "unknown", section: "unknown" };
+const defaultSymbol = { name: "unknown", value: 0, size: 0, type: "unknown", bind: "unknown", section: ".text" };
 const getSymbolInfo = (symbols: ParseResult["symbols"], label: string) => symbols.find(sym => sym.name === label) || defaultSymbol;
-
-const bootSequence = [
-  "Power On",
-  "Reset Vector",
-  "Reset_Handler",
-  "Copy .data",
-  "Zero .bss",
-  "SystemInit",
-  "HAL_Init",
-  "main",
-  "Scheduler",
-  "Interrupts",
-];
-
-const formatTime = (ts: number) => new Date(ts).toLocaleTimeString("en-US", { hour12: false });
-
-const buildELKOptions = (mode: LayoutMode) => {
-  const common = {
-    "elk.algorithm": mode === "dependency" ? "layered" : mode === "hierarchy" ? "layered" : mode === "architecture" ? "layered" : "layered",
-    "elk.direction": mode === "dependency" ? "RIGHT" : "DOWN",
-    "elk.layered.spacing.nodeNode": "40",
-    "elk.layered.spacing.edgeNode": "20",
-    "elk.layered.spacing.edgeEdge": "18",
-    "elk.spacing.componentComponent": "24",
-    "elk.layered.nodePlacement.strategy": "INTERACTIVE",
-    "elk.layered.edgeRouting": "ORTHOGONAL",
-  };
-  if (mode === "architecture") {
-    return { ...common, "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX" };
-  }
-  if (mode === "radial") {
-    return { ...common, "elk.algorithm": "org.eclipse.elk.radial", "elk.direction": "DOWN" };
-  }
-  return common;
-};
 
 const runDagreLayout = (nodes: RenderNode[], edges: RenderEdge[], direction: "TB" | "LR") => {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: direction, nodesep: 50, ranksep: 100, marginx: 24, marginy: 24 });
+  g.setGraph({ rankdir: direction, nodesep: 45, ranksep: 80, marginx: 20, marginy: 20 });
   nodes.forEach((node) => {
     const width = Number(node.style?.width ?? 180);
     const height = Number(node.style?.height ?? 72);
@@ -164,14 +138,18 @@ const runDagreLayout = (nodes: RenderNode[], edges: RenderEdge[], direction: "TB
 const FunctionNode = ({ data, selected }: NodeProps<FunctionData>) => {
   const meta = CATEGORY_META[data.category];
   return (
-    <div className={`cg-node ${selected ? "selected" : ""}`} style={{ borderLeftColor: meta.accent, background: meta.fill }} title={`${data.name}\n${data.section} · ${formatBytes(data.size)} · ${data.stackEstimate}`}>
-      <div className="cg-node-header">
+    <div
+      className={`cg-node ${selected ? "selected ring-2 ring-white" : ""}`}
+      style={{ borderLeftColor: meta.accent, background: meta.fill }}
+      title={`${data.name}\nSection: ${data.section} · Size: ${formatBytes(data.size)}\nCallers: ${data.callersCount} · Callees: ${data.calleesCount}`}
+    >
+      <div className="cg-node-header flex items-center justify-between gap-1">
         <span className="cg-node-icon">{data.icon}</span>
-        <span className="cg-node-title">{data.name}</span>
+        <span className="cg-node-title truncate font-bold text-xs">{data.name}</span>
       </div>
-      <div className="cg-node-footer">
-        <span className="cg-node-badge">{data.subtitle}</span>
-        <span className="cg-node-size">{formatBytes(data.size)}</span>
+      <div className="cg-node-footer flex items-center justify-between text-[10px] opacity-90 mt-1">
+        <span className="cg-node-badge font-mono px-1 rounded bg-black/40 text-[9px]">{data.section || ".text"}</span>
+        <span className="cg-node-size font-mono font-semibold">{formatBytes(data.size)}</span>
       </div>
     </div>
   );
@@ -186,9 +164,7 @@ export default function CallGraph({
   onDisassemble,
   onShowSection,
   onOpenObject,
-  onViewSource,
-  onOpenCallers,
-  onOpenCallees,
+  onNavigate,
 }: {
   data: CG;
   result: ParseResult;
@@ -198,560 +174,589 @@ export default function CallGraph({
   onDisassemble?: (name: string) => void;
   onShowSection?: (section: string) => void;
   onOpenObject?: (name: string) => void;
-  onViewSource?: (name: string) => void;
-  onOpenCallers?: (name: string) => void;
-  onOpenCallees?: (name: string) => void;
+  onNavigate?: (target: string, parameter?: string) => void;
 }) {
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("hierarchy");
+  const [graphMode, setGraphMode] = useState<GraphMode>("calls");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("hierarchical");
   const [search, setSearch] = useState("");
-  const [searchFilter, setSearchFilter] = useState<(typeof SEARCH_FILTERS)[number]>("all");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("Overview");
   const [bottomTab, setBottomTab] = useState<BottomTab>("Trace");
-  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([{ ts: Date.now(), message: "Workspace ready. Select a node to inspect execution flow.", level: "info" }]);
-  const [bootStep, setBootStep] = useState(0);
-  const [treeOpen, setTreeOpen] = useState<Record<NodeCategory, boolean>>(() => ({
-    Startup: true,
-    "HAL/Drivers": true,
-    Middleware: true,
-    Application: true,
-    Libraries: false,
-    Runtime: true,
-    Interrupts: true,
-  }));
-  const [graphNodes, setGraphNodes] = useState<RenderNode[]>([]);
-  const [graphEdges, setGraphEdges] = useState<RenderEdge[]>([]);
-  const [layoutEngine, setLayoutEngine] = useState<string>("elk");
-  const [layoutError, setLayoutError] = useState<string | null>(null);
-  const [learningMode, setLearningMode] = useState(false);
+  const [maxDepth, setMaxDepth] = useState<number>(8);
+  const [hideOrphans, setHideOrphans] = useState<boolean>(false);
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([
+    { ts: Date.now(), message: "Architecture-agnostic Firmware Flow Explorer initialized.", level: "info" },
+  ]);
   const reactFlow = useRef<ReactFlowInstance | null>(null);
 
+  const architectureName = useMemo(() => detectArchitecture(result, device), [result, device]);
   const symbolsByName = useMemo(() => new Map(result.symbols.map((sym) => [sym.name, sym])), [result.symbols]);
-  const baseEntry = useMemo(() => data.nodes.find((node) => node.type === "entry")?.label || result.symbols.find((sym) => sym.name === "main")?.name || "main", [data.nodes, result.symbols]);
 
-  const availableNodes = useMemo(() => data.nodes.map((node) => {
-    const symbol = symbolsByName.get(node.label) || defaultSymbol;
-    const category = inferCategory(node.label);
-    const subtitle = symbol.section || ".text";
-    const width = Math.max(176, Math.min(320, 180 + Math.round((symbol.size || 16) / Math.max(1, Math.max(...result.symbols.map((s) => s.size || 0))) * 180)));
-    const height = nodeHeightFromStack(stackEstimate(symbol.size || 0));
-    return {
-      id: node.id,
-      type: "functionCard",
-      draggable: false,
-      position: { x: 0, y: 0 },
-      style: { width, height, cursor: "pointer" },
-      data: {
-        name: node.label,
-        section: symbol.section || ".text",
-        size: symbol.size || 0,
-        category,
-        module: inferModule(node.label),
-        purpose: summarizePurpose(node.label, category),
-        stackEstimate: stackEstimate(symbol.size || 0),
-        icon: CATEGORY_META[category].icon,
-        subtitle,
-      },
-    } as RenderNode;
-  }), [data.nodes, result.symbols, symbolsByName]);
-
-  const allEdges = useMemo<RenderEdge[]>(() => data.edges.map((edge) => {
-    const sourceNode = availableNodes.find((node) => node.id === edge.source);
-    const targetNode = availableNodes.find((node) => node.id === edge.target);
-    const sourceCat = sourceNode?.data.category;
-    const targetCat = targetNode?.data.category;
-    const self = edge.source === edge.target;
-    const edgeType = self ? "recursive" : sourceCat === "Interrupts" || targetCat === "Interrupts" ? "interrupt" : sourceCat === "Libraries" || targetCat === "Libraries" ? "library" : "call";
-    const isRecursive = edgeType === "recursive";
-    return {
-      id: `${edge.source}_${edge.target}`,
-      source: edge.source,
-      target: edge.target,
-      type: "smoothstep",
-      animated: !isRecursive && edgeType === "call",
-      markerEnd: "arrowclosed",
-      style: {
-        stroke: edgeType === "interrupt" ? "rgba(241,97,114,.92)" : edgeType === "library" ? "rgba(115,198,124,.78)" : "rgba(255,255,255,.32)",
-        strokeWidth: isRecursive ? 2.4 : edgeType === "interrupt" ? 2.2 : 1.4,
-        strokeDasharray: edgeType === "recursive" ? "6 4" : edgeType === "library" ? "3 4" : undefined,
-        opacity: 0.8,
-      },
-      data: { edgeType },
-    } as RenderEdge;
-  }), [availableNodes, data.edges]);
-
-  const filteredNodes = useMemo(() => {
-    const filterRx = SEARCH_FILTER_REGEX[searchFilter] || SEARCH_FILTER_REGEX.all;
-    return availableNodes.filter((node) => {
-      const text = `${node.data.name} ${node.data.section} ${node.data.module}`.toLowerCase();
-      return filterRx.test(node.data.name) && (!search || text.includes(search.toLowerCase()));
+  // Compute Caller and Callee Degrees
+  const degrees = useMemo(() => {
+    const callersMap = new Map<string, number>();
+    const calleesMap = new Map<string, number>();
+    data.nodes.forEach((n) => { callersMap.set(n.id, 0); calleesMap.set(n.id, 0); });
+    data.edges.forEach((e) => {
+      callersMap.set(e.target, (callersMap.get(e.target) || 0) + 1);
+      calleesMap.set(e.source, (calleesMap.get(e.source) || 0) + 1);
     });
-  }, [availableNodes, search, searchFilter]);
+    return { callersMap, calleesMap };
+  }, [data]);
 
-  const visibleIds = useMemo(() => new Set(filteredNodes.map((node) => node.id)), [filteredNodes]);
-  const filteredEdges = useMemo(() => allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)), [allEdges, visibleIds]);
+  // Primary Entry Point Detection (Architecture-Agnostic)
+  const baseEntry = useMemo(() => {
+    const entryCandidate = data.nodes.find((n) => /^(Reset_Handler|_start|entry|main|app_main)$/i.test(n.label))?.label
+      || result.symbols.find((s) => /^(Reset_Handler|_start|main|app_main)$/i.test(s.name))?.name
+      || data.nodes[0]?.label || "main";
+    return entryCandidate;
+  }, [data.nodes, result.symbols]);
 
-  const depths = useMemo(() => {
-    const graph = new Map<string, string[]>();
-    availableNodes.forEach((node) => graph.set(node.id, []));
-    allEdges.forEach((edge) => graph.get(edge.source)?.push(edge.target));
-    const distance = new Map<string, number>();
-    const entryId = availableNodes.find((node) => node.data.name === baseEntry)?.id || availableNodes[0]?.id || "";
-    const queue = [{ id: entryId, depth: 0 }];
-    while (queue.length) {
-      const { id, depth } = queue.shift()!;
-      if (!id) continue;
-      const current = distance.get(id);
-      if (current !== undefined && current <= depth) continue;
-      distance.set(id, depth);
-      (graph.get(id) || []).forEach((next) => queue.push({ id: next, depth: depth + 1 }));
-    }
-    return distance;
-  }, [availableNodes, allEdges, baseEntry]);
+  // Transform raw data into render nodes
+  const availableNodes = useMemo(() => {
+    return data.nodes.map((node) => {
+      const symbol = symbolsByName.get(node.label) || defaultSymbol;
+      const category = inferAgnosticCategory(node.label);
+      const callersCount = degrees.callersMap.get(node.id) || 0;
+      const calleesCount = degrees.calleesMap.get(node.id) || 0;
+      const riskScore = calculateRiskScore(symbol.size || 0, callersCount, calleesCount);
 
-  const categoryTree = useMemo(() => CATEGORY_ORDER.map((category) => ({
-    category,
-    items: filteredNodes.filter((node) => node.data.category === category).sort((a, b) => (depths.get(a.id) ?? 0) - (depths.get(b.id) ?? 0) || b.data.size - a.data.size),
-  })), [filteredNodes, depths]);
+      return {
+        id: node.id,
+        type: "functionCard",
+        draggable: false,
+        position: { x: 0, y: 0 },
+        style: { width: 190, height: 72, cursor: "pointer" },
+        data: {
+          name: node.label,
+          section: symbol.section || ".text",
+          size: symbol.size || 0,
+          category,
+          module: inferModule(node.label),
+          purpose: `${category} routine: ${node.label}`,
+          stackEstimate: stackEstimate(symbol.size || 0),
+          icon: CATEGORY_META[category].icon,
+          subtitle: symbol.section || ".text",
+          callersCount,
+          calleesCount,
+          riskScore,
+        },
+      } as RenderNode;
+    });
+  }, [data.nodes, result.symbols, symbolsByName, degrees]);
 
-  useEffect(() => {
-    const tName = typeof targetSymbol === "string" ? targetSymbol : targetSymbol?.name;
-    if (tName) {
-      const matchedNode = availableNodes.find((n) => n.data.name === tName || n.id === tName);
-      if (matchedNode) {
-        setSelectedNode(matchedNode.id);
+  const allEdges = useMemo<RenderEdge[]>(() => {
+    return data.edges.map((edge) => {
+      const sourceNode = availableNodes.find((n) => n.id === edge.source);
+      const targetNode = availableNodes.find((n) => n.id === edge.target);
+      const isInterrupt = sourceNode?.data.category === "Interrupts" || targetNode?.data.category === "Interrupts";
+      const isLibrary = sourceNode?.data.category === "Libraries" || targetNode?.data.category === "Libraries";
+      const isSelf = edge.source === edge.target;
+
+      return {
+        id: `${edge.source}_${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        type: "smoothstep",
+        animated: !isSelf && !isInterrupt,
+        markerEnd: "arrowclosed",
+        style: {
+          stroke: isInterrupt ? "rgba(241,97,114,.9)" : isLibrary ? "rgba(115,198,124,.8)" : "rgba(61,219,216,.6)",
+          strokeWidth: isInterrupt ? 2.2 : 1.4,
+          strokeDasharray: isSelf ? "6 4" : isLibrary ? "3 4" : undefined,
+        },
+      } as RenderEdge;
+    });
+  }, [availableNodes, data.edges]);
+
+  // Mode & Filter Logic
+  const filteredNodes = useMemo(() => {
+    return availableNodes.filter((node) => {
+      // 1. Search Query
+      if (search && !node.data.name.toLowerCase().includes(search.toLowerCase()) && !node.data.section.toLowerCase().includes(search.toLowerCase())) {
+        return false;
       }
+      // 2. Category Filter
+      if (selectedCategory !== "all" && node.data.category !== selectedCategory) {
+        return false;
+      }
+      // 3. Hide Orphans
+      if (hideOrphans && node.data.callersCount === 0 && node.data.calleesCount === 0) {
+        return false;
+      }
+      // 4. Graph Mode Filtering
+      if (graphMode === "startup" && node.data.category !== "Startup" && node.data.name !== "main" && node.data.name !== "app_main") {
+        return false;
+      }
+      if (graphMode === "isr" && node.data.category !== "Interrupts") {
+        return false;
+      }
+      if (graphMode === "task" && node.data.category !== "RTOS/Tasks") {
+        return false;
+      }
+      if (graphMode === "driver" && node.data.category !== "Drivers") {
+        return false;
+      }
+      if (graphMode === "library" && node.data.category !== "Libraries" && node.data.category !== "Runtime") {
+        return false;
+      }
+      return true;
+    });
+  }, [availableNodes, search, selectedCategory, hideOrphans, graphMode]);
+
+  const visibleIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
+  const filteredEdges = useMemo(() => {
+    return allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+  }, [allEdges, visibleIds]);
+
+  // Position Nodes using Dagre / Radial
+  const layoutedNodes = useMemo(() => {
+    if (!filteredNodes.length) return [];
+    if (layoutMode === "radial") {
+      const centerNode = filteredNodes.find((n) => n.data.name === baseEntry) || filteredNodes[0];
+      const radius = 220;
+      return filteredNodes.map((node, idx) => {
+        if (node.id === centerNode.id) return { ...node, position: { x: 400, y: 300 } };
+        const angle = ((idx - 1) / Math.max(1, filteredNodes.length - 1)) * 2 * Math.PI;
+        return {
+          ...node,
+          position: { x: 400 + Math.cos(angle) * radius, y: 300 + Math.sin(angle) * radius },
+        };
+      });
+    }
+    return runDagreLayout(filteredNodes, filteredEdges, layoutMode === "orthogonal" ? "LR" : "TB");
+  }, [filteredNodes, filteredEdges, layoutMode, baseEntry]);
+
+  // Handle Selection & Synchronization
+  const handleSelectNode = useCallback((node: RenderNode) => {
+    setSelectedNode(node.id);
+    setTraceEvents((events) => [
+      ...events.slice(-19),
+      { ts: Date.now(), message: `Inspecting ${node.data.name} (${node.data.section})`, level: "action" },
+    ]);
+  }, []);
+
+  // Handle incoming navigation targets
+  useEffect(() => {
+    if (targetSymbol) {
+      const symName = typeof targetSymbol === "string" ? targetSymbol : targetSymbol.name;
+      const match = availableNodes.find((n) => n.data.name === symName || n.id === symName);
+      if (match) setSelectedNode(match.id);
     }
   }, [targetSymbol, availableNodes]);
 
-  const pathCandidates = useMemo(() => {
-    if (!selectedNode) return new Set<string>(filteredNodes.map((node) => node.id));
-    const set = new Set<string>([selectedNode]);
-    
-    if (targetMode === "callers") {
-      filteredEdges.forEach((edge) => {
-        if (edge.target === selectedNode) set.add(edge.source);
-      });
-      return set;
-    }
-    
-    if (targetMode === "callees") {
-      filteredEdges.forEach((edge) => {
-        if (edge.source === selectedNode) set.add(edge.target);
-      });
-      return set;
-    }
+  const activeNodeData = useMemo(() => {
+    return availableNodes.find((n) => n.id === selectedNode) || filteredNodes[0] || availableNodes[0];
+  }, [selectedNode, availableNodes, filteredNodes]);
 
-    const queue = [selectedNode];
-    const calls = new Map<string, string[]>();
-    const callers = new Map<string, string[]>();
-    filteredEdges.forEach((edge) => { calls.set(edge.source, [...(calls.get(edge.source) || []), edge.target]); callers.set(edge.target, [...(callers.get(edge.target) || []), edge.source]); });
-    while (queue.length) {
-      const current = queue.shift()!;
-      (calls.get(current) || []).forEach((target) => { if (!set.has(target)) { set.add(target); queue.push(target); } });
-      (callers.get(current) || []).forEach((source) => { if (!set.has(source)) { set.add(source); queue.push(source); } });
-    }
-    return set;
-  }, [selectedNode, filteredEdges, filteredNodes, targetMode]);
+  const activeSymbolData = useMemo(() => {
+    return activeNodeData ? getSymbolInfo(result.symbols, activeNodeData.data.name) : defaultSymbol;
+  }, [activeNodeData, result.symbols]);
 
-  const pathEdgeIds = useMemo(() => {
-    const ids = new Set<string>();
-    filteredEdges.forEach((edge) => { if (pathCandidates.has(edge.source) && pathCandidates.has(edge.target)) ids.add(edge.id); });
-    return ids;
-  }, [filteredEdges, pathCandidates]);
-
-  const highlightedSymbol = useMemo(() => selectedNode ? availableNodes.find((node) => node.id === selectedNode) : null, [selectedNode, availableNodes]);
-  const selectedSymbol = useMemo(() => highlightedSymbol ? getSymbolInfo(result.symbols, highlightedSymbol.data.name) : defaultSymbol, [highlightedSymbol, result.symbols]);
-
-  const inspectFunction = useCallback((node: RenderNode) => {
-    setSelectedNode(node.id);
-    setInspectorTab("Overview");
-    setBottomTab("Trace");
-    setTraceEvents((events) => [...events.slice(-19), { ts: Date.now(), message: `Selected ${node.data.name} (${node.data.section})`, level: "action" }]);
-    const width = Number(node.style?.width ?? 180);
-    const height = Number(node.style?.height ?? 72);
-    window.setTimeout(() => reactFlow.current?.setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom: 1.1, duration: 250 }), 50);
-  }, []);
-
-  const appendTrace = useCallback((message: string, level: TraceEvent["level"] = "info") => {
-    setTraceEvents((events) => [...events.slice(-38), { ts: Date.now(), message, level }]);
-  }, []);
-
-  const layoutGraph = useCallback(async () => {
-    if (!filteredNodes.length) {
-      setGraphNodes([]);
-      setGraphEdges([]);
-      return;
-    }
-
-    const positioned = filteredNodes.map((node) => ({ ...node }));
-    const edgeList = filteredEdges.map((edge) => ({ ...edge }));
-    setLayoutError(null);
-
-    try {
-      const elkModule = await import("elkjs");
-      const Elk = (elkModule as any).default;
-      const elk = new Elk();
-      const elkGraph = {
-        id: "root",
-        layoutOptions: buildELKOptions(layoutMode),
-        children: positioned.map((node) => ({ id: node.id, width: node.style?.width || 180, height: node.style?.height || 72 })),
-        edges: edgeList.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
-      };
-      const resultLayout = await elk.layout(elkGraph as any);
-      const mapped = positioned.map((node) => {
-        const layoutNode = (resultLayout.children || []).find((child: any) => child.id === node.id);
-        return layoutNode ? { ...node, position: { x: layoutNode.x || 0, y: layoutNode.y || 0 } } : node;
-      });
-      setGraphNodes(mapped);
-      setGraphEdges(edgeList);
-      setLayoutEngine("elk");
-    } catch (error) {
-      const fallback = runDagreLayout(positioned, edgeList, layoutMode === "dependency" ? "LR" : "TB");
-      setGraphNodes(fallback);
-      setGraphEdges(edgeList);
-      setLayoutEngine("dagre");
-      setLayoutError("Auto-layout fallback engaged.");
-    }
-  }, [filteredNodes, filteredEdges, layoutMode]);
-
-  useEffect(() => { layoutGraph(); }, [layoutGraph]);
-
-  useEffect(() => {
-    if (graphNodes.length && reactFlow.current) reactFlow.current.fitView({ padding: 0.14 });
-  }, [graphNodes.length]);
-
-  useEffect(() => {
-    if (!selectedNode || highlightedSymbol) return;
-    const first = filteredNodes[0];
-    if (first) inspectFunction(first);
-  }, [filteredNodes, selectedNode, inspectFunction, highlightedSymbol]);
-
-  const graphMetrics = useMemo(() => ({
-    functions: availableNodes.length,
-    interrupts: availableNodes.filter((node) => node.data.category === "Interrupts").length,
-    maxDepth: Math.max(0, ...Array.from(depths.values())),
-    largest: availableNodes.reduce((current, node) => (node.data.size > current.data.size ? node : current), availableNodes[0]),
-    drivers: availableNodes.filter((node) => node.data.category === "HAL/Drivers").sort((a, b) => b.data.size - a.data.size).slice(0, 3),
-    flash: result.summary[".text"] || 0,
-    ram: (result.summary[".data"] || 0) + (result.summary[".bss"] || 0),
-    recursive: data.edges.filter((edge) => edge.source === edge.target).length,
-    fanOut: ((filteredEdges.length || 0) / Math.max(1, availableNodes.length)).toFixed(2),
-  }), [availableNodes, depths, result.summary, filteredEdges.length, data.edges]);
-
-  const handleContextMenu = useCallback((event: React.MouseEvent, node: RenderNode) => {
-    event.preventDefault();
-    appendTrace(`Context menu opened for ${node.data.name}`, "info");
-  }, [appendTrace]);
+  // Node Types Definition
+  const nodeTypes = useMemo(() => ({ functionCard: FunctionNode }), []);
 
   return (
-    <div className="callgraph-shell">
-      <div className="cg-toolbar-shell">
-        <div>
-          <div className="cg-toolbar-title">Execution Analysis</div>
-          <div className="cg-toolbar-subtitle">Firmware call graph investigation with startup, HAL, runtime and interrupt context.</div>
-          <div className="cg-toolbar-caption">Target: {device.name}</div>
+    <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
+      {/* 1. TOP TOOLBAR: ARCHITECTURE BADGE, GRAPH MODES, LAYOUT & SEARCH */}
+      <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex flex-wrap items-center justify-between gap-3 flex-shrink-0 mono text-xs">
+        {/* LEFT: ARCHITECTURE & ISA TITLE */}
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-[var(--a)] inline-block animate-pulse" />
+            Flow Explorer
+          </span>
+          <span className="px-2 py-0.5 rounded bg-black/50 border border-[var(--line)] text-emerald-400 font-mono text-[11px]">
+            ISA: {architectureName}
+          </span>
+          <span className="text-[var(--mut)] text-[11px] font-mono">
+            ({filteredNodes.length} / {availableNodes.length} Functions)
+          </span>
         </div>
-        <div className="cg-toolbar-actions">
-          <button className="btn-hw" onClick={() => reactFlow.current?.fitView({ padding: 0.12 })}>Fit Graph</button>
-          <button className="btn-hw" onClick={() => setSearch("")}>Clear Search</button>
-          <button className="btn-hw" onClick={() => setLayoutMode("hierarchy")}>Hierarchy</button>
-          <button className="btn-hw" onClick={() => setLayoutMode("architecture")}>Architecture</button>
-          <button className="btn-hw" onClick={() => setLayoutMode("dependency")}>Dependency</button>
-          <button className="btn-hw" onClick={() => setLayoutMode("radial")}>Radial</button>
-          <button className={`btn-hw ${learningMode ? "primary" : ""}`} onClick={() => setLearningMode((value) => !value)}>{learningMode ? "Professional" : "Learning"}</button>
-        </div>
-      </div>
 
-      <div className="cg-workspace">
-        <aside className="cg-left-panel">
-          <div className="cg-panel-head">Explorer</div>
-          <div className="cg-panel-filter">
-            <input className="cg-search-input" placeholder="Search symbols" value={search} onChange={(event) => setSearch(event.target.value)} />
-            <div className="cg-filter-pills">
-              {SEARCH_FILTERS.map((filter) => (
-                <button key={filter} className={`pill ${searchFilter === filter ? "active" : ""}`} onClick={() => setSearchFilter(filter)}>{filter}</button>
-              ))}
-            </div>
-          </div>
-          <div className="cg-tree-shell">
-            {categoryTree.map((group) => (
-              <div key={group.category} className="cg-tree-group">
-                <button className="cg-tree-group-title" onClick={() => setTreeOpen((value) => ({ ...value, [group.category]: !value[group.category] }))}>
-                  <span>{treeOpen[group.category] ? "▼" : "▶"}</span>
-                  <span>{CATEGORY_META[group.category].icon} {group.category}</span>
-                  <span className="mut">{group.items.length}</span>
-                </button>
-                {treeOpen[group.category] && group.items.length > 0 && (
-                  <div className="cg-tree-items">
-                    {group.items.map((node) => (
-                      <button key={node.id} className={`cg-tree-item ${selectedNode === node.id ? "active" : ""}`} onClick={() => inspectFunction(node)}>
-                        <span>{node.data.name}</span>
-                        <span>{formatBytes(node.data.size)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <main className="cg-graph-panel">
-          <div className="cg-graph-header">
-            <div className="cg-graph-heading">Call Graph</div>
-            <div className="cg-graph-subheading">Layout: {layoutMode} • Engine: {layoutEngine.toUpperCase()} {layoutError ? `• ${layoutError}` : ""}</div>
-          </div>
-          <div className="cg-graph-canvas">
-            <ReactFlowProvider>
-              <ReactFlow
-                nodes={graphNodes.map((node) => ({
-                  ...node,
-                  className: selectedNode === node.id ? "selected-path" : undefined,
-                }))}
-                edges={graphEdges.map((edge) => ({
-                  ...edge,
-                  style: {
-                    ...edge.style,
-                    opacity: !selectedNode || pathEdgeIds.has(edge.id) ? 1 : 0.12,
-                    strokeWidth: !selectedNode || pathEdgeIds.has(edge.id) ? edge.style?.strokeWidth || 1.4 : 1,
-                    filter: !selectedNode || pathEdgeIds.has(edge.id) ? "drop-shadow(0 0 6px rgba(61,219,216,.32))" : "none",
-                  },
-                }))}
-                nodeTypes={{ functionCard: FunctionNode }}
-                onInit={(instance) => { reactFlow.current = instance; }}
-                onNodeClick={(_, node) => inspectFunction(node as RenderNode)}
-                onNodeContextMenu={(event, node) => handleContextMenu(event as unknown as React.MouseEvent, node as RenderNode)}
-                onPaneClick={() => setSelectedNode(null)}
-                fitView
-                fitViewOptions={{ padding: 0.14 }}
-                panOnScroll
-                zoomOnScroll
-                attributionPosition="bottom-left"
-                style={{ background: "#09101a" }}
-              >
-                <MiniMap
-                  nodeStrokeColor={(node) => CATEGORY_META[(node.data as FunctionData).category].accent}
-                  nodeColor={(node) => CATEGORY_META[(node.data as FunctionData).category].fill}
-                  zoomable
-                  pannable
-                />
-                <Controls showInteractive={false} />
-                <Background gap={20} color="#141d29" />
-              </ReactFlow>
-            </ReactFlowProvider>
-          </div>
-        </main>
-
-        <aside className="cg-right-panel">
-          <div className="cg-panel-head">Inspector</div>
-          <div className="cg-inspector-tabs">
-            {(["Overview", "Memory", "Calls", "Metrics"] as InspectorTab[]).map((tab) => (
-              <button key={tab} className={`tab ${inspectorTab === tab ? "active" : ""}`} onClick={() => setInspectorTab(tab)}>{tab}</button>
-            ))}
-          </div>
-          {!highlightedSymbol ? (
-            <div className="cg-empty-block">Select a function to inspect its startup role, call relationships, and memory footprint.</div>
-          ) : (
-            <div className="cg-inspector-body">
-              <div className="cg-inspector-label">{highlightedSymbol.data.name}</div>
-              <div className="cg-inspector-tag-row">
-                <span className="tag">{highlightedSymbol.data.category}</span>
-                <span className="tag">{highlightedSymbol.data.subtitle}</span>
-              </div>
-              <div className="cg-inspector-grid">
-                <div className="row"><span>Address</span><strong>{selectedSymbol.value ? `0x${selectedSymbol.value.toString(16)}` : "n/a"}</strong></div>
-                <div className="row"><span>Section</span><strong>{highlightedSymbol.data.section}</strong></div>
-                <div className="row"><span>Object File</span><strong>{highlightedSymbol.data.module}</strong></div>
-                <div className="row"><span>Flash</span><strong>{formatBytes(highlightedSymbol.data.size)}</strong></div>
-                <div className="row"><span>Stack</span><strong>{highlightedSymbol.data.stackEstimate}</strong></div>
-                <div className="row"><span>Call Depth</span><strong>{depths.get(highlightedSymbol.id) ?? 0}</strong></div>
-                <div className="row"><span>Call Count</span><strong>{(filteredEdges.filter((edge) => edge.source === highlightedSymbol.id).length) + (filteredEdges.filter((edge) => edge.target === highlightedSymbol.id).length)}</strong></div>
-              </div>
-              {inspectorTab === "Overview" && (
-                <div className="cg-inspector-panel">
-                  <div className="panel-title">Purpose</div>
-                  <div className="panel-text">{highlightedSymbol.data.purpose}</div>
-                  {learningMode && <div className="panel-note">{highlightedSymbol.data.name.includes("Reset") ? "Reset path is the first firmware execution chain after reset." : "Select a HAL or runtime function to reveal driver and startup context."}</div>}
-                </div>
-              )}
-              {inspectorTab === "Memory" && (
-                <div className="cg-inspector-panel">
-                  <div className="panel-title">Memory Snapshot</div>
-                  <div className="panel-text">Flash: {formatBytes(result.summary[".text"] || 0)} · RAM: {formatBytes((result.summary[".data"] || 0) + (result.summary[".bss"] || 0))}</div>
-                  <div className="panel-text">Section: {highlightedSymbol.data.section}</div>
-                </div>
-              )}
-              {inspectorTab === "Calls" && (
-                <div className="cg-inspector-panel">
-                  <div className="panel-title">Call Relationships</div>
-                  <div className="panel-text">Called by: {filteredEdges.filter((edge) => edge.target === highlightedSymbol.id).length}</div>
-                  <div className="panel-text">Calls: {filteredEdges.filter((edge) => edge.source === highlightedSymbol.id).length}</div>
-                </div>
-              )}
-              {inspectorTab === "Metrics" && (
-                <div className="cg-inspector-panel">
-                  <div className="panel-title">Advanced Metrics</div>
-                  <div className="panel-text">Graph engine: {layoutEngine.toUpperCase()}</div>
-                  <div className="panel-text">Category: {highlightedSymbol.data.category}</div>
-                  <div className="panel-text">Relative size: {(highlightedSymbol.data.size / Math.max(1, availableNodes.reduce((sum, node) => sum + node.data.size, 0)) * 100).toFixed(1)}%</div>
-                </div>
-              )}
-              <div className="cg-inspector-actions grid grid-cols-2 gap-2">
-                <button className="btn-hw primary" disabled={!onDisassemble} onClick={() => onDisassemble?.(highlightedSymbol.data.name)}>Open Assembly</button>
-                <button className="btn-hw" disabled={!onShowSection} onClick={() => onShowSection?.(highlightedSymbol.data.section)}>Highlight Section</button>
-                <button className="btn-hw" onClick={() => onOpenObject?.(highlightedSymbol.data.name)}>Open Object</button>
-                <button className="btn-hw" onClick={() => onViewSource?.(highlightedSymbol.data.name)}>View Source</button>
-                <button className="btn-hw" onClick={() => onOpenCallers?.(highlightedSymbol.data.name)}>Open Callers</button>
-                <button className="btn-hw" onClick={() => onOpenCallees?.(highlightedSymbol.data.name)}>Open Callees</button>
-              </div>
-            </div>
-          )}
-        </aside>
-      </div>
-
-      <div className="cg-bottom-panel">
-        <div className="cg-bottom-tabs">
-          {(["Trace", "Timeline", "Events", "Warnings", "Statistics", "Console", "Build Compare"] as BottomTab[]).map((tab) => (
-            <button key={tab} className={`bottom-tab ${bottomTab === tab ? "active" : ""}`} onClick={() => setBottomTab(tab)}>{tab}</button>
+        {/* CENTER: 6 GRAPH FILTER MODES */}
+        <div className="flex items-center border border-[var(--line)] rounded overflow-hidden p-0.5 bg-black/40 text-[10px]">
+          {[
+            { id: "calls", label: "Function Calls", icon: "🎯" },
+            { id: "startup", label: "Startup Flow", icon: "🚀" },
+            { id: "isr", label: "ISR & Vectors", icon: "⚡" },
+            { id: "task", label: "Task / RTOS", icon: "🧩" },
+            { id: "driver", label: "Drivers / HAL", icon: "⚙" },
+            { id: "library", label: "Libraries", icon: "📚" },
+          ].map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => setGraphMode(mode.id as GraphMode)}
+              className={`px-2.5 py-1 rounded transition flex items-center gap-1 ${
+                graphMode === mode.id
+                  ? "bg-[var(--a-dim)] text-[var(--a)] font-bold shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span>{mode.icon}</span>
+              <span>{mode.label}</span>
+            </button>
           ))}
         </div>
-        <div className="cg-bottom-body">
-          {bottomTab === "Trace" && (
-            <div className="cg-boot-view">
-              {bootSequence.map((step, index) => (
-                <div key={step} className={`boot-step ${bootStep === index ? "active" : ""}`}>
-                  <span>{index + 1}</span>
-                  <div>{step}</div>
-                </div>
-              ))}
-              <div className="boot-controls">
-                <button className="btn-hw" onClick={() => setBootStep((index) => Math.max(0, index - 1))}>Step Back</button>
-                <button className="btn-hw primary" onClick={() => setBootStep((index) => Math.min(bootSequence.length - 1, index + 1))}>Step Forward</button>
-              </div>
-            </div>
-          )}
-          {bottomTab === "Timeline" && (
-            <div className="cg-log-grid">
-              {traceEvents.slice(-6).map((event) => (
-                <div key={event.ts} className="log-card"><span className="mut">{formatTime(event.ts)}</span><div>{event.message}</div></div>
-              ))}
-            </div>
-          )}
-          {bottomTab === "Events" && (
-            <div className="cg-log-list">
-              {traceEvents.map((event) => (
-                <div key={event.ts} className={`log-line ${event.level}`}>{formatTime(event.ts)} · {event.message}</div>
-              ))}
-            </div>
-          )}
-          {bottomTab === "Warnings" && (
-            <div className="cg-empty-block">No warnings detected. The workspace is focused on graph and execution analysis.</div>
-          )}
-          {bottomTab === "Statistics" && (
-            <div className="cg-stats-grid">
-              <div className="stat-card"><span>Functions</span><strong>{graphMetrics.functions}</strong></div>
-              <div className="stat-card"><span>Interrupts</span><strong>{graphMetrics.interrupts}</strong></div>
-              <div className="stat-card"><span>Boot Depth</span><strong>{graphMetrics.maxDepth}</strong></div>
-              <div className="stat-card"><span>Largest Function</span><strong>{graphMetrics.largest.data.name}</strong></div>
-              <div className="stat-card"><span>Largest Driver</span><strong>{graphMetrics.drivers[0]?.data.name || "—"}</strong></div>
-              <div className="stat-card"><span>Flash Used</span><strong>{formatBytes(graphMetrics.flash)}</strong></div>
-              <div className="stat-card"><span>RAM Used</span><strong>{formatBytes(graphMetrics.ram)}</strong></div>
-              <div className="stat-card"><span>Recursive</span><strong>{graphMetrics.recursive}</strong></div>
-            </div>
-          )}
-          {bottomTab === "Console" && (
-            <div className="cg-console-shell">
-              <div className="console-line">{">"} search any function to center the graph and highlight its execution path.</div>
-              <div className="console-line">{">"} selecting HAL or startup code exposes the reset-to-main boot chain.</div>
-              <div className="console-line">{">"} right-click a node to reveal action commands.</div>
-            </div>
-          )}
-          {bottomTab === "Build Compare" && (
-            <div className="cg-empty-block">Build diff integration is available in the compare workspace. Select the compare tab to run full firmware build analysis.</div>
-          )}
+
+        {/* RIGHT: SEARCH, DEPTH, ORPHANS & LAYOUT OPTIONS */}
+        <div className="flex items-center gap-2">
+          {/* SEARCH INPUT */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search functions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="px-2.5 py-1 bg-black/60 border border-[var(--line)] rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[var(--a)] w-36"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-2 top-1 text-gray-400 hover:text-white text-xs">
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* HIDE ORPHANS TOGGLE */}
+          <button
+            onClick={() => setHideOrphans((h) => !h)}
+            className={`px-2 py-1 border border-[var(--line)] rounded text-xs transition ${
+              hideOrphans ? "bg-amber-500/20 text-amber-400 font-bold border-amber-500/40" : "bg-black/60 text-gray-400 hover:text-white"
+            }`}
+            title="Toggle hiding isolated functions with zero calls"
+          >
+            {hideOrphans ? "Hide Orphans: ON" : "Orphans: OFF"}
+          </button>
+
+          {/* MAX DEPTH SELECTOR */}
+          <select
+            value={maxDepth}
+            onChange={(e) => setMaxDepth(Number(e.target.value))}
+            className="px-2 py-1 bg-black/60 border border-[var(--line)] rounded text-xs text-gray-300 focus:outline-none focus:border-[var(--a)]"
+            title="Maximum Call Graph Traversal Depth"
+          >
+            <option value={4}>Depth: 4</option>
+            <option value={8}>Depth: 8</option>
+            <option value={12}>Depth: 12</option>
+            <option value={20}>Depth: Max</option>
+          </select>
+
+          {/* LAYOUT ENGINE SELECTOR */}
+          <select
+            value={layoutMode}
+            onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
+            className="px-2 py-1 bg-black/60 border border-[var(--line)] rounded text-xs text-gray-300 focus:outline-none focus:border-[var(--a)]"
+          >
+            <option value="hierarchical">Hierarchical (DAG)</option>
+            <option value="radial">Radial Flow Map</option>
+            <option value="orthogonal">Orthogonal Grid</option>
+          </select>
         </div>
       </div>
 
-      <style>{`
-        .callgraph-shell{display:flex;flex-direction:column;gap:12px;padding:18px 18px 10px;color:var(--fg);min-height:100%;background:linear-gradient(180deg,#090c12 0%,#05070c 100%)}
-        .cg-toolbar-shell{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 18px 14px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(6,12,18,.94)}
-        .cg-toolbar-title{font-size:18px;font-weight:700;letter-spacing:.02em}
-        .cg-toolbar-subtitle{font-size:12px;color:rgba(255,255,255,.55);margin-top:6px}
-        .cg-toolbar-actions{display:flex;flex-wrap:wrap;gap:10px}
-        .btn-hw{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:var(--fg);padding:10px 14px;border-radius:8px;font-size:12px;cursor:pointer;transition:all .18s ease}
-        .btn-hw.primary{background:rgba(61,219,216,.12);border-color:rgba(61,219,216,.3);color:#d6fff9}
-        .btn-hw:hover{background:rgba(255,255,255,.08)}
-        .cg-workspace{display:grid;grid-template-columns:300px minmax(0,1fr)340px;gap:14px;min-height:calc(100vh - 300px)}
-        .cg-left-panel,.cg-right-panel{background:rgba(11,18,27,.95);border:1px solid rgba(255,255,255,.08);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
-        .cg-panel-head{padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.08);font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.68);font-weight:700}
-        .cg-panel-filter{padding:16px;display:flex;flex-direction:column;gap:12px}
-        .cg-search-input{width:100%;padding:12px 14px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.02);color:var(--fg);font-family:JetBrains Mono;font-size:13px}
-        .cg-filter-pills{display:flex;flex-wrap:wrap;gap:8px}
-        .pill{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:var(--mut);padding:8px 12px;border-radius:999px;font-size:11px;cursor:pointer}
-        .pill.active{background:rgba(61,219,216,.16);border-color:rgba(61,219,216,.35);color:#d6fff9}
-        .cg-tree-shell{overflow:auto;padding:0 16px 16px}
-        .cg-tree-group{margin-top:12px}
-        .cg-tree-group-title{width:100%;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.02);color:var(--fg);font-family:JetBrains Mono;font-size:13px;border:none;cursor:pointer}
-        .cg-tree-items{display:flex;flex-direction:column;margin-top:6px}
-        .cg-tree-item{display:flex;justify-content:space-between;padding:10px 14px;border-radius:8px;background:rgba(255,255,255,.02);color:var(--fg);font-family:JetBrains Mono;font-size:12px;border:none;cursor:pointer;text-align:left;transition:background .18s ease}
-        .cg-tree-item:hover{background:rgba(61,219,216,.08)}
-        .cg-tree-item.active{background:rgba(61,219,216,.14);border-left:3px solid #3ddbd8}
-        .cg-graph-panel{display:flex;flex-direction:column;gap:12px}
-        .cg-graph-header{padding:16px 18px;border-radius:12px 12px 0 0;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-bottom:none}
-        .cg-graph-heading{font-size:16px;font-weight:700}
-        .cg-graph-subheading{font-size:12px;color:rgba(255,255,255,.55);margin-top:4px}
-        .cg-graph-canvas{position:relative;flex:1;min-height:640px;border:1px solid rgba(255,255,255,.08);border-radius:0 0 12px 12px;overflow:hidden;background:#07101c}
-        .cg-node{border-radius:12px;padding:14px 14px 12px;border:1px solid rgba(255,255,255,.08);box-shadow:0 12px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:10px}
-        .cg-node.selected{box-shadow:0 18px 40px rgba(61,219,216,.22);border-color:rgba(61,219,216,.45)}
-        .cg-node-header{display:flex;align-items:center;gap:10px}
-        .cg-node-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:14px}
-        .cg-node-title{font-size:13px;font-weight:700;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .cg-node-footer{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-        .cg-node-badge{font-size:11px;color:rgba(255,255,255,.72);background:rgba(255,255,255,.05);padding:4px 8px;border-radius:999px}
-        .cg-node-size{font-size:11px;color:rgba(255,255,255,.72);font-family:JetBrains Mono}
-        .cg-right-panel{display:flex;flex-direction:column}
-        .cg-inspector-tabs{display:flex;gap:6px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
-        .tab{flex:1;padding:10px 12px;border:none;background:rgba(255,255,255,.03);color:var(--mut);border-radius:8px;cursor:pointer;font-size:12px}
-        .tab.active{background:rgba(61,219,216,.12);color:#d6fff9}
-        .cg-inspector-body{padding:16px;display:flex;flex-direction:column;gap:12px}
-        .cg-inspector-label{font-size:16px;font-weight:700;color:var(--fg)}
-        .cg-inspector-tag-row{display:flex;flex-wrap:wrap;gap:8px}
-        .tag{font-size:10px;text-transform:uppercase;color:var(--mut);border:1px solid rgba(255,255,255,.08);padding:6px 10px;border-radius:999px}
-        .cg-inspector-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-        .row{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.02)}
-        .row span{font-size:11px;color:rgba(255,255,255,.6)}
-        .row strong{font-size:13px;color:var(--fg)}
-        .cg-inspector-panel{padding:14px 12px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06)}
-        .panel-title{font-size:13px;font-weight:700;margin-bottom:8px}
-        .panel-text{font-size:13px;color:var(--fg);line-height:1.6}
-        .panel-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.6);padding:10px 12px;border-radius:8px;background:rgba(61,219,216,.07)}
-        .cg-inspector-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-        .cg-empty-block{padding:24px 20px;color:rgba(255,255,255,.58);font-size:13px;line-height:1.7}
-        .cg-bottom-panel{border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(11,18,27,.95);overflow:hidden}
-        .cg-bottom-tabs{display:flex;gap:2px;background:rgba(255,255,255,.04);padding:10px}
-        .bottom-tab{flex:1;padding:12px 14px;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:12px}
-        .bottom-tab.active{background:rgba(61,219,216,.12);color:#d6fff9;border-radius:8px}
-        .cg-bottom-body{padding:18px}
-        .cg-boot-view{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
-        .boot-step{border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,.02);text-align:center}
-        .boot-step.active{background:rgba(61,219,216,.14);border-color:rgba(61,219,216,.4)}
-        .boot-step span{display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:999px;background:rgba(255,255,255,.08);font-size:12px}
-        .boot-controls{grid-column:span 5;display:flex;justify-content:flex-end;gap:10px}
-        .cg-log-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-        .log-card{padding:14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);font-size:12px;line-height:1.5}
-        .cg-log-list{display:flex;flex-direction:column;gap:10}
-        .log-line{padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--fg)}
-        .log-line.info{color:#d6fff9}
-        .log-line.action{color:#97d6ff}
-        .log-line.warning{color:#ff9b8c}
-        .cg-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-        .stat-card{padding:14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)}
-        .stat-card span{font-size:11px;color:rgba(255,255,255,.6);text-transform:uppercase}
-        .stat-card strong{display:block;margin-top:6px;font-size:16px;color:var(--fg)}
-        .cg-console-shell{display:flex;flex-direction:column;gap:10px}
-        .console-line{padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);font-family:JetBrains Mono;font-size:12px;color:var(--mut)}
-      `}</style>
+      {/* 2. MAIN WORKSPACE: GRAPH VISUALIZER + RIGHT SYNCHRONIZED INSPECTOR */}
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
+        {/* VISUALIZER CONTAINER */}
+        <main className="flex-1 bg-[#05080c] relative overflow-hidden flex flex-col">
+          {/* CATEGORY LEGEND BAR */}
+          <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5 bg-black/80 border border-[var(--line)] p-1.5 rounded-md backdrop-blur-md text-[10px] mono">
+            {Object.entries(CATEGORY_META).map(([cat, meta]) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(selectedCategory === cat ? "all" : cat)}
+                className={`px-2 py-0.5 rounded transition flex items-center gap-1 border ${
+                  selectedCategory === cat
+                    ? "border-white font-bold"
+                    : "border-transparent opacity-80 hover:opacity-100"
+                }`}
+                style={{ backgroundColor: meta.fill, color: meta.accent }}
+              >
+                <span>{meta.icon}</span>
+                <span>{meta.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* REACT FLOW CANVAS */}
+          <ReactFlowProvider>
+            <ReactFlow
+              nodes={layoutedNodes}
+              edges={filteredEdges}
+              nodeTypes={nodeTypes}
+              onNodeClick={(_, node) => handleSelectNode(node as RenderNode)}
+              onInit={(inst) => { reactFlow.current = inst; inst.fitView({ padding: 0.2 }); }}
+              fitView
+              minZoom={0.2}
+              maxZoom={2.5}
+            >
+              <Background color="#16202c" gap={20} size={1} />
+              <Controls className="bg-black/80 border border-[var(--line)] rounded p-1 fill-white" />
+              <MiniMap
+                nodeColor={(node) => CATEGORY_META[(node.data as FunctionData)?.category || "Application"]?.accent || "#3ddbd8"}
+                maskColor="rgba(0, 0, 0, 0.7)"
+                className="bg-black/80 border border-[var(--line)] rounded overflow-hidden"
+              />
+            </ReactFlow>
+          </ReactFlowProvider>
+        </main>
+
+        {/* 3. RIGHT PANEL: SYNCHRONIZED FLOW INSPECTOR */}
+        <aside className="w-80 border-l border-[var(--line)] bg-[var(--panel)] flex flex-col overflow-hidden flex-shrink-0 mono text-xs">
+          {/* INSPECTOR HEADER */}
+          <div className="p-3 border-b border-[var(--line)] bg-black/40 flex items-center justify-between">
+            <span className="font-bold text-[var(--a)] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+              <span>{activeNodeData?.data.icon || "🔍"}</span>
+              <span className="truncate max-w-[180px]">{activeNodeData?.data.name || "Flow Inspector"}</span>
+            </span>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400 font-bold">
+              Risk: {activeNodeData?.data.riskScore || 10}%
+            </span>
+          </div>
+
+          {/* INSPECTOR TABS */}
+          <div className="flex border-b border-[var(--line)] bg-black/20">
+            {(["Overview", "Memory", "Calls", "Metrics"] as InspectorTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setInspectorTab(tab)}
+                className={`flex-1 py-1.5 text-center text-[10px] transition ${
+                  inspectorTab === tab
+                    ? "text-[var(--a)] border-b-2 border-[var(--a)] bg-black/40 font-bold"
+                    : "text-[var(--mut)] hover:text-gray-300"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* INSPECTOR BODY */}
+          <div className="flex-1 p-3 overflow-y-auto space-y-3">
+            {activeNodeData ? (
+              <>
+                {/* TAB 1: OVERVIEW */}
+                {inspectorTab === "Overview" && (
+                  <div className="space-y-3">
+                    <div className="p-2.5 bg-black/50 border border-[var(--line)] rounded space-y-1">
+                      <div className="text-[10px] text-[var(--mut)] uppercase tracking-wider font-bold">Symbol Identifier</div>
+                      <div className="font-mono text-sm font-bold text-white break-all">{activeNodeData.data.name}</div>
+                      <div className="text-[11px] text-[var(--a)] font-mono">{activeNodeData.data.purpose}</div>
+                      {targetMode && (
+                        <div className="text-[10px] text-amber-400 font-mono pt-1 border-t border-white/10">
+                          Active Target Mode: {targetMode}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                        <div className="text-[10px] text-[var(--mut)]">Category</div>
+                        <div className="font-bold text-emerald-400">{activeNodeData.data.category}</div>
+                      </div>
+                      <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                        <div className="text-[10px] text-[var(--mut)]">Size</div>
+                        <div className="font-bold text-white">{formatBytes(activeNodeData.data.size)}</div>
+                      </div>
+                      <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                        <div className="text-[10px] text-[var(--mut)]">Section</div>
+                        <div className="font-bold text-amber-400 font-mono">{activeNodeData.data.section}</div>
+                      </div>
+                      <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                        <div className="text-[10px] text-[var(--mut)]">Stack Est.</div>
+                        <div className="font-bold text-purple-300">{activeNodeData.data.stackEstimate}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: MEMORY */}
+                {inspectorTab === "Memory" && (
+                  <div className="space-y-2 text-[11px]">
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Memory Section:</span>
+                      <span className="font-bold font-mono text-white">{activeNodeData.data.section}</span>
+                    </div>
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Object Module:</span>
+                      <span className="font-bold font-mono text-emerald-400">{activeNodeData.data.module}</span>
+                    </div>
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">ELF Binding:</span>
+                      <span className="font-bold font-mono text-purple-300">{activeSymbolData.bind || "GLOBAL"}</span>
+                    </div>
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Target ISA:</span>
+                      <span className="font-bold font-mono text-amber-400">{architectureName}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: CALLS */}
+                {inspectorTab === "Calls" && (
+                  <div className="space-y-2 text-[11px]">
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Incoming Callers (Fan-In):</span>
+                      <span className="font-bold text-emerald-400">{activeNodeData.data.callersCount}</span>
+                    </div>
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Outgoing Callees (Fan-Out):</span>
+                      <span className="font-bold text-amber-400">{activeNodeData.data.calleesCount}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: METRICS */}
+                {inspectorTab === "Metrics" && (
+                  <div className="space-y-2 text-[11px]">
+                    <div className="p-2 bg-black/40 border border-[var(--line)] rounded flex justify-between">
+                      <span className="text-[var(--mut)]">Complexity Risk Rating:</span>
+                      <span className="font-bold text-rose-400">{activeNodeData.data.riskScore}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* CROSS-NAVIGATION ACTION BUTTONS */}
+                <div className="pt-3 border-t border-[var(--line)] space-y-2">
+                  <button
+                    onClick={() => onDisassemble?.(activeNodeData.data.name)}
+                    className="w-full py-1.5 px-3 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold hover:bg-[var(--a)] hover:text-black transition flex items-center justify-center gap-1.5 text-xs"
+                  >
+                    <span>🔍</span>
+                    <span>View in Code Investigator</span>
+                  </button>
+
+                  <button
+                    onClick={() => onShowSection?.(activeNodeData.data.section)}
+                    className="w-full py-1.5 px-3 rounded bg-black/60 border border-[var(--line)] text-gray-300 font-bold hover:text-white hover:border-[var(--a)] transition flex items-center justify-center gap-1.5 text-xs"
+                  >
+                    <span>🗺️</span>
+                    <span>Inspect in Memory Analysis</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      onOpenObject?.(activeNodeData.data.module);
+                      onNavigate?.("objects", activeNodeData.data.module);
+                    }}
+                    className="w-full py-1.5 px-3 rounded bg-black/60 border border-[var(--line)] text-gray-300 font-bold hover:text-white hover:border-[var(--a)] transition flex items-center justify-center gap-1.5 text-xs"
+                  >
+                    <span>📦</span>
+                    <span>Inspect Object Module</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSearch(activeNodeData.data.name);
+                    }}
+                    className="w-full py-1.5 px-3 rounded bg-black/60 border border-[var(--line)] text-gray-300 font-bold hover:text-white hover:border-[var(--a)] transition flex items-center justify-center gap-1.5 text-xs"
+                  >
+                    <span>📌</span>
+                    <span>Focus Flow on This Function</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center text-[var(--mut)] py-8">Select a function to inspect</div>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      {/* 4. BOTTOM WORKFLOW TABS */}
+      <div className="h-36 border-t border-[var(--line)] bg-[#05080c] flex flex-col flex-shrink-0 mono text-xs">
+        <div className="flex border-b border-[var(--line)] bg-[var(--panel)]">
+          {[
+            { id: "Trace", label: "Flow Trace Logs" },
+            { id: "Architecture", label: "Target Profile" },
+            { id: "Vectors", label: "ISR Vector Map" },
+            { id: "Analytics", label: "Complexity Analytics" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setBottomTab(tab.id as BottomTab)}
+              className={`px-4 py-1.5 transition ${
+                bottomTab === tab.id
+                  ? "text-[var(--a)] border-b-2 border-[var(--a)] bg-black/40 font-bold"
+                  : "text-[var(--mut)] hover:text-gray-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 p-2.5 overflow-y-auto bg-black/60">
+          {bottomTab === "Trace" && (
+            <div className="space-y-1 font-mono text-[11px]">
+              {traceEvents.map((ev, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-gray-300">
+                  <span className="text-[var(--mut)]">[{new Date(ev.ts).toLocaleTimeString()}]</span>
+                  <span className={ev.level === "action" ? "text-[var(--a)] font-bold" : "text-gray-300"}>
+                    {ev.message}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {bottomTab === "Architecture" && (
+            <div className="grid grid-cols-4 gap-3 text-[11px]">
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Target Architecture</span>
+                <strong className="text-emerald-400">{architectureName}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">ELF Toolchain</span>
+                <strong className="text-white">{result.toolchain || "GCC / LLVM"}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Entry Point</span>
+                <strong className="text-amber-400 font-mono">{baseEntry} ({result.entry || "0x08000000"})</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Total Symbols</span>
+                <strong className="text-purple-300">{result.symbols?.length || 0} Symbols</strong>
+              </div>
+            </div>
+          )}
+
+          {bottomTab === "Vectors" && (
+            <div className="flex flex-wrap gap-2 text-[11px]">
+              {result.isrs && result.isrs.length > 0 ? (
+                result.isrs.map((isr, i) => (
+                  <span key={i} className="px-2 py-1 bg-black/40 border border-rose-500/30 text-rose-300 rounded font-mono">
+                    ⚡ {isr.name || isr}
+                  </span>
+                ))
+              ) : (
+                <span className="text-[var(--mut)]">Discovered Vector Handlers: {availableNodes.filter(n => n.data.category === "Interrupts").length} ISR routines mapped.</span>
+              )}
+            </div>
+          )}
+
+          {bottomTab === "Analytics" && (
+            <div className="grid grid-cols-4 gap-3 text-[11px]">
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Total Functions</span>
+                <strong className="text-white">{availableNodes.length}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Interrupt Vectors</span>
+                <strong className="text-rose-400">{availableNodes.filter(n => n.data.category === "Interrupts").length}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">RTOS Tasks & Threads</span>
+                <strong className="text-amber-400">{availableNodes.filter(n => n.data.category === "RTOS/Tasks").length}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] block">Isolated / Orphan Routines</span>
+                <strong className="text-purple-300">{availableNodes.filter(n => n.data.callersCount === 0 && n.data.calleesCount === 0).length}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
