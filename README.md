@@ -289,10 +289,19 @@ Firmware-Insight-Studio/
 
 ## Roadmap
 
-- [ ] **Advanced Decompiler Engine**: Improved control flow reconstruction (if/else, loops) for stripped binaries.
-- [ ] **Expanded DWARF Expression Evaluation**: Complete stack variable location tracking.
-- [ ] **RTOS Task Visualizer**: Static allocation and stack size verification for FreeRTOS and Zephyr OS binaries.
-- [ ] **Extensible Plugin System**: Custom python rules for domain-specific security and code size audits.
+### Phase 1: Near-Term Enhancements (v1.6)
+- [ ] **Live Debugging Integration**: Direct GDB/OpenOCD socket bridge for live register stepping, breakpoint toggling, and memory inspection in the Execution Workspace.
+- [ ] **CMSIS-SVD Peripheral Integration**: Support for uploading custom SVD XML files to auto-populate hardware register maps in the Device Explorer.
+- [ ] **DWARF Call Graph Precision**: Extraction of exact subprogram call edges directly from DWARF debug tags (`DW_TAG_subprogram` / `DW_AT_call_file`).
+
+### Phase 2: Advanced Analysis & Decompilation (v2.0)
+- [ ] **Control-Flow AST Decompiler Engine**: Enhanced control-flow reconstruction (`if/else`, loops, variable types) for stripped binaries lacking source code.
+- [ ] **RTOS Task & Stack Inspection**: Static allocation and stack watermark analysis for FreeRTOS, Zephyr OS, and CMSIS-RTOS targets.
+- [ ] **Multi-Binary Diff Comparison**: Side-by-side visual code inspector diffing two arbitrary `.elf` revisions.
+
+### Phase 3: Platform Extensibility (v2.5)
+- [ ] **Extensible Python Plugin API**: Custom user-defined rule passes for security checks, memory safety audits, and custom MCU targets.
+- [ ] **Headless CI/CD GitHub Action**: Official GitHub Action marketplace integration for pull request size impact comments.
 
 ---
 
