@@ -18,7 +18,7 @@
 
 <!-- DEMO_PLACEHOLDER_START -->
 <p align="center">
-  <img width="2816" height="1536" alt="FWS" src="https://github.com/user-attachments/assets/b6e5cf11-ef00-43e1-9acf-1e68bb547e62" />
+  <img width="1254" height="1254" alt="FIS" src="https://github.com/user-attachments/assets/8d6d34ec-94bb-45c3-98de-8cbfb8392b21" />
   <br/>
   <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
 </p>
