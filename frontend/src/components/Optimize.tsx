@@ -1,36 +1,66 @@
-import type { ParseResult } from "../App";
-type Card = { icon: string; title: string; evidence: string; fix: string; save?: string; tone: "a" | "b" | "m" };
-export default function Optimize({ result }: { result: ParseResult }) {
-  const s = result.summary || {}; const syms = result.symbols || [];
-  const byName = (re: RegExp) => syms.filter(x => re.test(x.name));
-  const sizeOf = (arr: any[]) => arr.reduce((a, x) => a + (x.size || 0), 0);
-  const cards: Card[] = [];
-  const printf = byName(/\b(printf|sprintf|vsprintf|snprintf|vprintf|fprintf)\b/);
-  if (printf.length) cards.push({ icon: "⎙", title: "printf family linked", evidence: `${printf.length} fn · ${sizeOf(printf)} B in .text`, fix: "link with --specs=nano.specs and drop -u _printf_float unless you need %f", save: "EST 3–6 KB", tone: "b" });
-  const dc = result.dead_code;
-  if (dc && dc.reclaimable > 0) cards.push({ icon: "⌫", title: `${dc.items?.length || 0} unreferenced functions`, evidence: `${dc.reclaimable} B not reached from any relocation or call edge`, fix: "compile with -ffunction-sections -fdata-sections and link -Wl,--gc-sections", save: `EST ${(dc.reclaimable / 1024).toFixed(1)} KB`, tone: "b" });
-  const ro = s[".rodata"] || 0;
-  if (ro > 4096) cards.push({ icon: "▤", title: "large .rodata", evidence: `${(ro / 1024).toFixed(1)} KB of constants / tables`, fix: "-fmerge-all-constants; audit lookup tables — move read-only data to flash (already there) and consider table compression", tone: "m" });
-  const bss = s[".bss"] || 0;
-  if (bss > 2048) cards.push({ icon: "▥", title: "large .bss (zero-init RAM)", evidence: `${(bss / 1024).toFixed(1)} KB`, fix: "shrink big buffers; make read-only arrays `const` so they live in flash, not RAM", save: "RAM", tone: "b" });
-  const bc = result.build_config || {};
-  if (!(bc.opt_hints || []).some((h: string) => /LTO/i.test(h))) cards.push({ icon: "⇄", title: "no LTO detected", evidence: "per-TU file symbols present → link-time optimization likely off", fix: "add -flto at compile AND link to inline across translation units", save: "EST 2–8%", tone: "m" });
-  if (!(bc.opt_hints || []).some((h: string) => /gc-sections|function sections/i.test(h))) cards.push({ icon: "✂", title: "function-sections / gc-sections not confirmed", evidence: "no per-function .text.* sections observed", fix: "-ffunction-sections -fdata-sections + -Wl,--gc-sections removes unused code per-section", tone: "m" });
-  const big = syms.filter(x => x.size > 1024).slice(0, 3);
-  if (big.length) cards.push({ icon: "▲", title: "largest functions", evidence: big.map(x => `${x.name} (${x.size} B)`).join(", "), fix: "profile these first — refactor, table-drive, or split hot/cold paths", tone: "a" });
-  return (
-    <div className="panel">
-      <div className="panel-head"><span>Optimization Assistant</span><span className="tag">rule-based · evidence from this binary · savings are estimates</span></div>
-      <div className="p-4 grid sm:grid-cols-2 gap-3">
-        {cards.length === 0 && <div className="mut mono text-[12px] py-8 text-center sm:col-span-2">no actionable findings — lean build</div>}
-        {cards.map((c, i) => (
-          <div key={i} className="optcard" style={{ borderLeftColor: c.tone === "a" ? "var(--a)" : c.tone === "b" ? "var(--b)" : "var(--line2)" }}>
-            <div className="flex items-center gap-2"><span className="text-lg">{c.icon}</span><span className="fg font-medium text-[13px]">{c.title}</span>{c.save && <span className="tagpill acc2 ml-auto">{c.save}</span>}</div>
-            <div className="mut mono text-[11px] mt-2">evidence · {c.evidence}</div>
-            <div className="acc mono text-[11px] mt-1">→ {c.fix}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+import { useMemo, useState } from "react";
+import type { ParseResult, View } from "../App";
+import type { Snap } from "./Timeline";
+import type { Device } from "../utils/devices";
+import { assessFirmware } from "./FirmwareHealth";
+import { colRegions, inRegion } from "../utils/devices";
+
+type Category = "Flash" | "RAM" | "Performance" | "Power" | "Build Configuration" | "Security" | "Debug" | "RTOS";
+type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
+type Finding = { id: string; category: Category; title: string; severity: Severity; flash: number; ram: number; performance: string; risk: string; confidence: number; why: string; evidence: string[]; learn: string; symbol?: string };
+const severityTone: Record<Severity, string> = { Critical: "#e0566b", High: "#f08a48", Medium: "#f0a830", Low: "#78a7ff", Info: "#69788a" };
+const categories: Category[] = ["Flash", "RAM", "Performance", "Power", "Build Configuration", "Security", "Debug", "RTOS"];
+const kb = (value: number) => value ? `${(value / 1024).toFixed(value >= 1024 ? 1 : 0)} KB` : "—";
+
+function utilization(result: ParseResult, device: Device, type: "flash" | "ram") {
+  const regions = colRegions(device, type); const cap = regions.reduce((sum, region) => sum + region.size, 0);
+  const used = result.sections.filter(section => section.size > 0 && regions.some(region => inRegion(region, section.addr))).reduce((sum, section) => sum + section.size, 0);
+  return { used, cap, pct: cap ? Math.min(100, used / cap * 100) : 0 };
+}
+
+function buildFindings(result: ParseResult, device: Device): Finding[] {
+  const symbols = result.symbols || [], summary = result.summary || {}, config = result.build_config || {};
+  const find = (regex: RegExp) => symbols.filter(symbol => regex.test(symbol.name));
+  const size = (list: typeof symbols) => list.reduce((sum, symbol) => sum + (symbol.size || 0), 0);
+  const out: Finding[] = [];
+  const printf = find(/\b(printf|sprintf|vsprintf|snprintf|vprintf|fprintf)\b/i);
+  if (printf.length) out.push({ id: "flash-printf", category: "Flash", title: "Full printf runtime linked", severity: "High", flash: Math.max(3072, size(printf)), ram: 0, performance: "Improves formatting latency", risk: "Low", confidence: 92, why: "Formatted I/O symbols pull substantial conversion and formatting code into small firmware images.", evidence: printf.slice(0, 4).map(s => `${s.name} · ${s.size} B`), learn: "Embedded C libraries often link floating-point and format-conversion support with printf. A nano C library, fixed logging formats, or a binary trace channel can reduce code size substantially.", symbol: printf[0]?.name });
+  const dead = result.dead_code;
+  if (dead?.reclaimable) out.push({ id: "flash-dead", category: "Flash", title: "Unreachable function sections", severity: dead.reclaimable > 4096 ? "High" : "Medium", flash: dead.reclaimable, ram: 0, performance: "No runtime impact", risk: "Low", confidence: 76, why: "Functions with no detected relocation or call-edge reference may remain linked into the final image.", evidence: (dead.items || []).slice(0, 4).map((s: any) => `${s.name} · ${s.size} B`), learn: "Compile each function and data item into its own section, then let the linker garbage-collect unreferenced sections. Always validate vector-table and callback references before enabling aggressive removal.", symbol: dead.items?.[0]?.name });
+  const bss = summary[".bss"] || 0;
+  if (bss > 1024) out.push({ id: "ram-bss", category: "RAM", title: "Large zero-initialized RAM footprint", severity: bss > 8192 ? "High" : "Medium", flash: 0, ram: Math.round(bss * .15), performance: "Neutral", risk: "Medium", confidence: 88, why: ".bss reserves RAM at boot even though it contributes no bytes to the firmware image.", evidence: [`.bss · ${bss} B`, ...symbols.filter(s => s.section === ".bss" && s.size).slice(0, 3).map(s => `${s.name} · ${s.size} B`)], learn: "Audit large buffers first. Make immutable tables const, right-size queues, and place DMA or scratch buffers in a dedicated memory region when the MCU provides one." });
+  const large = symbols.filter(s => s.type === "STT_FUNC" && s.size > 1024).slice(0, 3);
+  if (large.length) out.push({ id: "perf-large", category: "Performance", title: "Large hot-path candidates", severity: "Medium", flash: 0, ram: 0, performance: "Potentially faster critical paths", risk: "Medium", confidence: 61, why: "Large functions are good first candidates for profiling and algorithmic review, especially when they run from interrupts or control loops.", evidence: large.map(s => `${s.name} · ${s.size} B`), learn: "Size alone does not prove a bottleneck. Measure execution time, then reduce repeated work, replace expensive division or formatting, and move noncritical work out of interrupts.", symbol: large[0]?.name });
+  const busy = find(/(while|delay|poll|spin|wait)/i);
+  out.push({ id: "power-idle", category: "Power", title: "Review idle and polling paths", severity: busy.length ? "Medium" : "Info", flash: 0, ram: 0, performance: "May improve energy per task", risk: "Low", confidence: busy.length ? 57 : 35, why: busy.length ? "Polling-like symbols were found; continuous polling can prevent low-power sleep states." : "Power behavior cannot be proven from symbol names alone, so verify the idle path before release.", evidence: busy.slice(0, 3).map(s => s.name).concat(busy.length ? [] : ["No explicit idle/poll symbols detected"]), learn: "Use interrupts or DMA for peripheral completion where possible. In the idle task, select the deepest safe sleep mode and confirm every wake source is configured." });
+  const hints = config.opt_hints || [];
+  if (!hints.some((hint: string) => /LTO/i.test(hint))) out.push({ id: "build-lto", category: "Build Configuration", title: "Link-time optimization not detected", severity: "Medium", flash: Math.round((summary[".text"] || 0) * .04), ram: 0, performance: "May enable cross-module inlining", risk: "Medium", confidence: 70, why: "The binary has no clear LTO markers and retains translation-unit information.", evidence: [config.compiler || "compiler string unavailable", "No LTO hint in ELF sections"], learn: "Enable -flto at both compile and link stages. Compare map files and test every build configuration because LTO can expose missing declarations or alter debug behavior." });
+  if (!hints.some((hint: string) => /gc-sections|function sections/i.test(hint))) out.push({ id: "build-gc", category: "Build Configuration", title: "Section garbage collection not confirmed", severity: "Medium", flash: dead?.reclaimable || 0, ram: 0, performance: "Neutral", risk: "Low", confidence: 73, why: "The ELF does not show enough per-function sections to confirm dead-section removal is active.", evidence: ["No per-function section pattern found", ...(hints.slice(0, 2))], learn: "Use -ffunction-sections -fdata-sections and -Wl,--gc-sections. Keep startup, interrupt and callback references explicitly retained in the linker script." });
+  const unsafe = find(/\b(strcpy|strcat|gets|sprintf|vsprintf)\b/i);
+  if (unsafe.length) out.push({ id: "security-format", category: "Security", title: "Unsafe string or formatting API", severity: unsafe.some(s => /gets|strcpy|strcat/i.test(s.name)) ? "Critical" : "High", flash: 0, ram: 0, performance: "Neutral", risk: "High", confidence: 96, why: "Unbounded string APIs can overwrite stack or global memory when an input is longer than expected.", evidence: unsafe.slice(0, 4).map(s => s.name), learn: "Prefer bounded APIs and validate every externally sourced length. snprintf limits output but still requires checking its return value for truncation.", symbol: unsafe[0]?.name });
+  const debugSections = result.sections.filter(s => s.name.startsWith(".debug")).reduce((sum, s) => sum + s.size, 0);
+  if (debugSections) out.push({ id: "debug-symbols", category: "Debug", title: "Debug information present", severity: "Info", flash: 0, ram: 0, performance: "Neutral", risk: "Low", confidence: 99, why: "DWARF debug sections are present in the uploaded ELF. They help debugging but should not be packaged in a size-constrained release artifact.", evidence: result.sections.filter(s => s.name.startsWith(".debug")).slice(0, 4).map(s => `${s.name} · ${s.size} B`), learn: "Keep an unstripped ELF for symbolication and debugging, while distributing a stripped production image when flash storage or transport size matters." });
+  const rtos = find(/(FreeRTOS|vTask|xTask|osThread|cmsis_os)/i);
+  out.push({ id: "rtos-stack", category: "RTOS", title: rtos.length ? "RTOS task-stack margin review" : "RTOS usage not detected", severity: rtos.length ? "Medium" : "Info", flash: 0, ram: rtos.length ? 512 : 0, performance: rtos.length ? "Reduces stack-fault risk" : "Not applicable", risk: rtos.length ? "Medium" : "Low", confidence: rtos.length ? 82 : 90, why: rtos.length ? "RTOS scheduling symbols were detected, but task stack high-water marks are not available in a static ELF." : "No common RTOS scheduler symbols were found in the available symbol table.", evidence: rtos.length ? rtos.slice(0, 4).map(s => s.name) : ["No FreeRTOS/CMSIS-RTOS symbols"], learn: "Enable stack-overflow hooks and record high-water marks during realistic workload testing. Static ELF analysis cannot prove the maximum call depth across tasks and interrupts." });
+  const specific = device.id.startsWith("stm32") ? ["STM32 profile", "Review HAL footprint and place DMA buffers in dedicated SRAM/CCM only when the DMA bus can access it."] : device.id === "rp2040" ? ["RP2040 profile", "Move time-critical loops to SRAM and use PIO for deterministic I/O work where appropriate."] : device.id.startsWith("nrf") ? ["Nordic profile", "Use event-driven peripherals and verify SoftDevice or radio memory reservations before sizing RAM."] : device.id.startsWith("esp32") ? ["ESP32 profile", "Keep latency-critical ISR code in IRAM and audit flash-cache-safe functions used during cache-disabled windows."] : /avr/i.test(device.name) ? ["AVR profile", "Place constant tables and strings in program memory; SRAM is usually the first hard limit."] : /risc-v/i.test(device.core || "") ? ["RISC-V profile", "Review ISA extensions and interrupt-controller setup; keep startup and trap handlers explicitly retained."] : null;
+  if (specific) out.push({ id: "mcu-profile", category: "Performance", title: specific[0], severity: "Info", flash: 0, ram: 0, performance: "Target-specific", risk: "Low", confidence: 84, why: `The selected target is ${device.name}, so its memory and execution model affects optimization choices.`, evidence: [device.core || result.arch, device.vendor || "target profile"], learn: specific[1] });
+  return out;
+}
+
+export default function Optimize({ result, device, history, onNavigate }: { result: ParseResult; device: Device; history: Snap[]; onNavigate: (target: View, symbol?: string) => void }) {
+  const findings = useMemo(() => buildFindings(result, device), [result, device]);
+  const [category, setCategory] = useState<Category | "All">("All"); const [reviewed, setReviewed] = useState<Set<string>>(new Set());
+  const health = assessFirmware(result, device).score, flash = utilization(result, device, "flash"), ram = utilization(result, device, "ram");
+  const visible = findings.filter(finding => category === "All" || finding.category === category);
+  const potentialFlash = findings.reduce((sum, finding) => sum + finding.flash, 0), potentialRam = findings.reduce((sum, finding) => sum + finding.ram, 0);
+  const critical = findings.filter(finding => finding.severity === "Critical" || finding.severity === "High").length;
+  const recent = history.slice(-6);
+  return <div className="space-y-5">
+    <div className="panel"><div className="panel-head"><span>Optimization Intelligence</span><span className="tag">static analysis report · {findings.length} findings</span></div><div className="p-4 grid sm:grid-cols-2 xl:grid-cols-6 gap-3">
+      {[["Firmware health", `${health}/100`, "evidence-based score", "var(--a)"], ["Flash efficiency", `${(100 - flash.pct).toFixed(0)}%`, `${Math.round(flash.pct)}% capacity used`, "var(--a)"], ["RAM efficiency", `${(100 - ram.pct).toFixed(0)}%`, `${Math.round(ram.pct)}% capacity used`, "var(--b)"], ["Optimization progress", `${reviewed.size}/${findings.length}`, "findings reviewed", "#78a7ff"], ["Potential savings", `${kb(potentialFlash)} / ${kb(potentialRam)}`, "flash / RAM estimate", "#a98cf5"], ["Priority issues", String(critical), "critical + high", critical ? "var(--danger)" : "var(--a)"]].map(([label, value, note, color]) => <div className="border ln rounded-[3px] p-3" key={label}><div className="mono text-[9px] mut uppercase tracking-wider">{label}</div><div className="mono text-[18px] mt-2" style={{ color }}>{value}</div><div className="mono text-[9px] mut mt-1">{note}</div></div>)}
+    </div></div>
+    <div className="panel"><div className="panel-head"><span>Optimization Build Timeline</span><span className="tag">last {recent.length} locally analyzed builds</span></div><div className="p-4">{recent.length > 1 ? <div className="flex items-end gap-2 h-20">{recent.map((snap, index) => { const max = Math.max(...recent.map(item => item.flash), 1); const height = Math.max(12, snap.flash / max * 100); return <div className="flex-1 h-full flex flex-col justify-end gap-1" key={snap.id} title={`${snap.filename} · flash ${(snap.flash / 1024).toFixed(1)} KB · RAM ${(snap.ram / 1024).toFixed(1)} KB`}><div className="rounded-t-[2px]" style={{ height: `${height}%`, background: index === recent.length - 1 ? "var(--a)" : "var(--a-dim)" }} /><span className="mono text-[9px] mut text-center">#{history.length - recent.length + index + 1}</span></div>; })}</div> : <div className="mono text-[11px] mut py-3">Analyze more builds to see whether optimization work is reducing flash and RAM over time.</div>}</div></div>
+    <div className="flex flex-wrap gap-2">{(["All", ...categories] as const).map(item => <button className={`btn-hw ${category === item ? "primary" : ""}`} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div>
+    <div className="space-y-4">{visible.map(finding => <article className="panel overflow-hidden" key={finding.id} style={{ borderLeft: `3px solid ${severityTone[finding.severity]}` }}><div className="p-4"><div className="flex flex-col lg:flex-row gap-4"><div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="tag" style={{ color: severityTone[finding.severity], borderColor: severityTone[finding.severity] }}>{finding.severity.toUpperCase()}</span><span className="mono text-[10px] acc">{finding.category.toUpperCase()}</span><h3 className="fg font-medium text-[15px]">{finding.title}</h3></div><p className="mut text-[12px] leading-relaxed mt-3">{finding.why}</p><div className="grid sm:grid-cols-5 gap-2 mt-4">{[["FLASH", kb(finding.flash)], ["RAM", kb(finding.ram)], ["PERFORMANCE", finding.performance], ["RISK", finding.risk], ["CONFIDENCE", `${finding.confidence}%`]].map(([key, value]) => <div className="border ln rounded-[2px] px-2.5 py-2" key={key}><span className="mono text-[8px] mut">{key}</span><span className="block mono text-[10px] fg mt-1 truncate">{value}</span></div>)}</div></div><div className="lg:w-[300px] border ln rounded-[3px] p-3"><div className="mono text-[9px] acc tracking-[.12em]">EVIDENCE</div><div className="mt-2 space-y-1">{finding.evidence.map(item => <div className="mono text-[10px] mut truncate" title={item} key={item}>• {item}</div>)}</div></div></div><div className="flex flex-wrap gap-2 mt-4 pt-3 border-t ln"><button className="btn-hw" onClick={() => onNavigate("symbols")}>Symbols</button><button className="btn-hw" onClick={() => onNavigate("memory")}>Treemap</button><button className="btn-hw" onClick={() => onNavigate("objects")}>Object Explorer</button><button className="btn-hw" disabled={!finding.symbol} onClick={() => finding.symbol && onNavigate("debug", finding.symbol)}>Disassemble</button><button className={`btn-hw ml-auto ${reviewed.has(finding.id) ? "primary" : ""}`} onClick={() => setReviewed(current => { const next = new Set(current); next.has(finding.id) ? next.delete(finding.id) : next.add(finding.id); return next; })}>{reviewed.has(finding.id) ? "Reviewed ✓" : "Mark reviewed"}</button></div><details className="mt-3 border ln rounded-[3px] px-3 py-2"><summary className="mono text-[10px] acc cursor-pointer">LEARN MORE</summary><p className="mut text-[11px] leading-relaxed mt-2">{finding.learn}</p></details></div></article>)}</div>
+  </div>;
 }

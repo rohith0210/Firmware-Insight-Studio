@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from collections import OrderedDict
-import tempfile, os, re, zlib
+import tempfile, os, re, zlib, subprocess, shutil
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 from elftools.elf.relocation import RelocationSection
@@ -235,14 +235,59 @@ def _va2off(c, addr):
     for a, b, o in c["va2off"]:
         if a <= addr < b: return o + (addr - a)
     return None
+def _arch_config(em):
+    """Return the shared register parsing config without requiring Capstone."""
+    em = str(em).upper()
+    if em in ("EM_ARM", "40"): return dict(pat=r"\b(r1[0-5]|r[0-9]|sp|lr|pc)\b", canon=_canon_arm, schema=_schema_arm(), thumb=True, tool="arm-none-eabi-objdump")
+    if em in ("EM_AARCH64", "183"): return dict(pat=r"\b([xw]3[01]|[xw][12]?[0-9]|sp|lr|pc)\b", canon=_canon_a64, schema=_schema_a64(), thumb=False, tool="objdump")
+    if em in ("EM_386", "3"): return dict(pat=r"\b(r1[0-5]|[re]?[abcd]x|[re]?[sd]i|[re]?bp|[re]?sp|rip|eip)\b", canon=_canon_x, schema=_schema_x32(), thumb=False, tool="objdump")
+    if em in ("EM_X86_64", "62"): return dict(pat=r"\b(r1[0-5]|[re]?[abcd]x|[re]?[sd]i|[re]?bp|[re]?sp|rip|eip)\b", canon=_canon_x, schema=_schema_x64(), thumb=False, tool="objdump")
+    return None
+
 def _arch_map(em):
+    cfg = _arch_config(em)
+    if not cfg: return None, None
     try: import capstone as cs
-    except Exception: return None, None
-    if em == "EM_ARM": return cs.CS_ARCH_ARM, dict(mode=cs.CS_MODE_ARM, pat=r"\b(r1[0-5]|r[0-9]|sp|lr|pc)\b", canon=_canon_arm, schema=_schema_arm(), thumb=True)
-    if em == "EM_AARCH64": return cs.CS_ARCH_ARM64, dict(mode=0, pat=r"\b([xw]3[01]|[xw][12]?[0-9]|sp|lr|pc)\b", canon=_canon_a64, schema=_schema_a64(), thumb=False)
-    if em == "EM_386": return cs.CS_ARCH_X86, dict(mode=cs.CS_MODE_32, pat=r"\b(r1[0-5]|[re]?[abcd]x|[re]?[sd]i|[re]?bp|[re]?sp|rip|eip)\b", canon=_canon_x, schema=_schema_x32(), thumb=False)
-    if em == "EM_X86_64": return cs.CS_ARCH_X86, dict(mode=cs.CS_MODE_64, pat=r"\b(r1[0-5]|[re]?[abcd]x|[re]?[sd]i|[re]?bp|[re]?sp|rip|eip)\b", canon=_canon_x, schema=_schema_x64(), thumb=False)
-    return None, None
+    except Exception: return None, cfg
+    machine = str(em).upper()
+    if machine in ("EM_ARM", "40"): return cs.CS_ARCH_ARM, {**cfg, "mode": cs.CS_MODE_ARM}
+    if machine in ("EM_AARCH64", "183"): return cs.CS_ARCH_ARM64, {**cfg, "mode": 0}
+    if machine in ("EM_386", "3"): return cs.CS_ARCH_X86, {**cfg, "mode": cs.CS_MODE_32}
+    if machine in ("EM_X86_64", "62"): return cs.CS_ARCH_X86, {**cfg, "mode": cs.CS_MODE_64}
+    return None, cfg
+
+_OBJDUMP_LINE = re.compile(r"^\s*([0-9a-fA-F]+):\s+([0-9a-fA-F ]+?)\s{2,}([.A-Za-z][\w.]*)\s*(.*)$")
+def _objdump_disasm(c, s, cfg):
+    tool = shutil.which(cfg["tool"])
+    if not tool: raise HTTPException(501, f"no disassembler available for {c['e_machine']} — install Capstone or {cfg['tool']}")
+    suffix = ".elf"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(c["bytes"]); tmp_path = tmp.name
+    try:
+        out = subprocess.run([tool, "-d", f"--start-address=0x{s['value'] & ~1:x}", f"--stop-address=0x{(s['value'] & ~1) + s['size']:x}", tmp_path], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(501, f"objdump fallback failed: {e}")
+    finally:
+        if os.path.exists(tmp_path): os.unlink(tmp_path)
+    instrs, touched, written = [], set(), set()
+    for line in out.splitlines():
+        # GNU objdump uses tab-separated address, bytes, mnemonic and operands.
+        # Split those fields first so hexadecimal mnemonics such as `add` are not
+        # accidentally swallowed as instruction bytes.
+        fields = line.split("\t")
+        if len(fields) >= 3 and fields[0].strip().endswith(":"):
+            try: addr = int(fields[0].strip()[:-1], 16)
+            except ValueError: continue
+            raw, mn, op = fields[1].strip(), fields[2].strip(), " ".join(fields[3:]).strip()
+        else:
+            m = _OBJDUMP_LINE.match(line)
+            if not m: continue
+            addr, raw, mn, op = int(m.group(1), 16), m.group(2).strip(), m.group(3), m.group(4).strip()
+        t, w = _parse_regs(op, cfg["pat"], cfg["canon"], mn)
+        touched |= set(t); written |= set(w)
+        instrs.append({"addr": addr, "bytes": raw, "mn": mn, "op": op, "t": t, "w": w})
+    if not instrs: raise HTTPException(501, f"{cfg['tool']} could not decode this function")
+    return instrs, sorted(touched), sorted(written)
 @app.get("/api/disasm")
 def disasm(checksum: str = Query(...), name: str = Query(...)):
     c = _CACHE.get(checksum)
@@ -250,11 +295,13 @@ def disasm(checksum: str = Query(...), name: str = Query(...)):
     s = c["sym_by_name"].get(name)
     if not s: raise HTTPException(404, f"function '{name}' not found")
     if s["size"] <= 0: raise HTTPException(404, f"'{name}' has zero size")
-    mapping = _arch_map(c["e_machine"])
-    if mapping[0] is None: raise HTTPException(501, f"disassembly unsupported for {c['e_machine']}")
-    try: import capstone as cs
-    except Exception: raise HTTPException(501, "capstone not installed")
-    ca, cfg = mapping
+    ca, cfg = _arch_map(c["e_machine"])
+    if not cfg: raise HTTPException(501, f"disassembly unsupported for {c['e_machine']}")
+    if ca is None:
+        instrs, touched, written = _objdump_disasm(c, s, cfg)
+        return {"func": {"name": name, "addr": s["value"] & ~1, "size": s["size"]}, "thumb": bool(cfg["thumb"] and (s["value"] & 1)), "arch": c["arch"],
+                "instructions": instrs, "touched": touched, "written": written, "schema": cfg["schema"]}
+    import capstone as cs
     val, size = s["value"], s["size"]; thumb = bool(cfg["thumb"] and (val & 1))
     mode = cs.CS_MODE_THUMB if thumb else cfg["mode"]
     try: md = cs.Cs(ca, mode)

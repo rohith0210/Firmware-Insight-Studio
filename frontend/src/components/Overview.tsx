@@ -1,6 +1,8 @@
 import type { ParseResult } from "../App";
 import type { Device } from "../utils/devices";
 import { usedIn, fmt } from "../utils/devices";
+import FirmwareHealth from "./FirmwareHealth";
+import MemoryPressure from "./MemoryPressure";
 function heat(r: number) { return r > 0.6 ? "#e0566b" : r > 0.32 ? "#f0a830" : r > 0.15 ? "#e0c84a" : "var(--a)"; }
 function Gauge({ label, used, cap, color }: { label: string; used: number; cap: number; color: string }) {
   const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
@@ -12,20 +14,22 @@ function Gauge({ label, used, cap, color }: { label: string; used: number; cap: 
   );
 }
 export default function Overview({ result, device }: { result: ParseResult; device: Device }) {
-  const s = result.summary || {};
   const usedF = usedIn(device, result.sections, ["flash", "xip"]), usedR = usedIn(device, result.sections, ["ram", "ccm"]);
   const capF = device.regions.filter(r => r.kind === "flash" || r.kind === "xip").reduce((a, r) => a + r.size, 0);
   const capR = device.regions.filter(r => r.kind === "ram" || r.kind === "ccm").reduce((a, r) => a + r.size, 0);
   const top = result.symbols.filter(x => x.size > 0).slice(0, 10); const max = top[0]?.size || 1;
   const Spec = ({ k, v, c }: { k: string; v: string; c?: string }) => (<div className="row"><span className="k">{k}</span><span className={`v ${c || ""}`}>{v}</span></div>);
   return (
-    <div className="grid lg:grid-cols-3 gap-5">
+    <div className="space-y-5">
+      <div className="grid lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 panel">
         <div className="panel-head"><span>Firmware Overview</span><span className="tag">{result.filename}</span></div>
         <div className="p-4">
           <div className="spec">
             <Spec k="Binary" v={result.filename} />
             <Spec k="Target Device" v={device.name} c="a" />
+            <Spec k="Vendor" v={device.vendor || "—"} />
+            <Spec k="Core / FPU" v={`${device.core || result.arch} · ${device.fpu || "—"}`} c="a" />
             <Spec k="Architecture" v={result.arch} c="a" />
             <Spec k="ELF Class" v={`${result.elf_class || "—"}-bit`} />
             <Spec k="Entry Address" v={result.entry} c="a" />
@@ -50,6 +54,9 @@ export default function Overview({ result, device }: { result: ParseResult; devi
           ))}
         </div>
       </div>
+      </div>
+      <div className="grid lg:grid-cols-2 gap-5"><FirmwareHealth result={result} device={device} /><MemoryPressure result={result} device={device} /></div>
+      <div className="mono text-[10px] mut px-1">target identity: {device.detection || "manual selection / device database"}. Confirm it in Settings before treating capacity as a hardware constraint.</div>
     </div>
   );
 }

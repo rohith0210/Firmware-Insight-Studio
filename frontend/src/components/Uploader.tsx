@@ -1,4 +1,4 @@
-import { useRef, useState, DragEvent } from "react";
+import { useRef, useState, type DragEvent } from "react";
 export default function Uploader({ onUpload, loading }: { onUpload: (f: File) => void; loading: boolean }) {
   const ref = useRef<HTMLInputElement>(null); const [hot, setHot] = useState(false);
   const drop = (e: DragEvent) => { e.preventDefault(); setHot(false); const f = e.dataTransfer.files[0]; if (f) onUpload(f); };

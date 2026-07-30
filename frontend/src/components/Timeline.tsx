@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } from "recharts";
 export type Snap = { id: number; filename: string; ts: number; flash: number; ram: number; file_size: number; checksum: string };
-const KB = (b: number) => (b / 1024).toFixed(1);
 export default function Timeline({ history, onClear }: { history: Snap[]; onClear: () => void }) {
   const data = useMemo(() => history.map((h, i) => ({ i: i + 1, name: h.filename, flash: +(h.flash / 1024).toFixed(2), ram: +(h.ram / 1024).toFixed(2), ts: h.ts })), [history]);
   return (

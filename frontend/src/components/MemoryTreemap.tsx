@@ -67,7 +67,7 @@ type Row = { name: string; size: number; x: number; y: number; w: number; h: num
 type Col = { kind: "sec" | "other"; x: number; w: number; headerH: number; frameH: number; secName?: string; secSize?: number; dom?: string; leafRects: LR[]; rows: Row[] };
 type Tip = { x: number; y: number; lines: string[] } | null;
 
-const H = 440, PAD = 2, COLGAP = 6, LEAFGAP = 2, BIG = 0.04;
+const H = 360, PAD = 2, COLGAP = 6, LEAFGAP = 2, BIG = 0.04;
 function leavesOf(sec: any, cap: number): Leaf[] {
   let lv: Leaf[] = (sec.children || []).filter((c: any) => c.size > 0).map((c: any) => ({ name: c.name, size: c.size })).sort((a: Leaf, b: Leaf) => b.size - a.size);
   if (lv.length > cap) { const rest = lv.slice(cap).reduce((a: number, c: Leaf) => a + c.size, 0); lv = lv.slice(0, cap); if (rest > 0) lv.push({ name: "other", size: rest }); }

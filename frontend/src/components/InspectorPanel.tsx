@@ -7,8 +7,30 @@ const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
 function heat(t: number) { t = Math.max(0, Math.min(1, t)); const x = t * (STOPS.length - 1); const i = Math.floor(x); const f = x - i; const a = STOPS[i], b = STOPS[Math.min(STOPS.length - 1, i + 1)]; const rgb = [mix(a[0], b[0], f), mix(a[1], b[1], f), mix(a[2], b[2], f)]; const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]; return { fill: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, dark: lum > 138 }; }
 const modOf = (n: string) => { const x = n.split("@")[0]; if (x.startsWith("HAL_") || x.startsWith("LL_")) { const p = x.split("_"); return (p[0] + "_" + (p[1] || "")).toUpperCase(); } if (x.startsWith("__") || x.startsWith("_Z")) return "runtime / c++"; const p = x.split("_"); return (p[0] || "app").toUpperCase() || "app"; };
 
-export default function InspectorPanel({ symbol, result, device, onClose, onSelect, onDisassemble, onShowSection }: {
-  symbol: LR; result: any; device: any; onClose: () => void; onSelect: (l: LR) => void; onDisassemble: (n: string) => void; onShowSection: (s: string) => void;
+export default function InspectorPanel({
+  symbol,
+  result,
+  device,
+  onClose,
+  onSelect,
+  onOpenAssembly,
+  onOpenObject,
+  onViewSource,
+  onHighlightSection,
+  onOpenCallers,
+  onOpenCallees,
+}: {
+  symbol: LR;
+  result: any;
+  device: any;
+  onClose: () => void;
+  onSelect: (l: LR) => void;
+  onOpenAssembly: (name: string) => void;
+  onOpenObject: (name: string) => void;
+  onViewSource: (name: string) => void;
+  onHighlightSection: (section: string) => void;
+  onOpenCallers: (name: string) => void;
+  onOpenCallees: (name: string) => void;
 }) {
   const [tab, setTab] = useState<"info" | "asm" | "refs">("info");
   useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
@@ -22,7 +44,8 @@ export default function InspectorPanel({ symbol, result, device, onClose, onSele
   const pctSec = symbol.secSize ? ((symbol.size / symbol.secSize) * 100).toFixed(1) : "0.0";
   const pctBin = ((symbol.size / totalBin) * 100).toFixed(1);
   const sibs = (treemap.find((d: any) => d.name === symbol.secName)?.children || []).filter((c: any) => c.name !== symbol.name && c.size > 0).sort((a: any, b: any) => b.size - a.size).slice(0, 5);
-  const isFunc = !!sym && sym.type === "STT_FUNC" && sym.size > 0;
+  const isFunc = !!sym && (sym.type === "STT_FUNC" || symbol.secName === ".text" || symbol.secName === ".isr_vector");
+  const hasObject = !!(result.objects && result.objects.length > 0);
 
   const Card = ({ k, v, c }: { k: string; v: string; c?: string }) => (
     <div className="bg-[var(--panel2)] border border-[var(--line)] rounded p-3">
@@ -92,23 +115,94 @@ export default function InspectorPanel({ symbol, result, device, onClose, onSele
           )}
 
           <div className="pt-4 border-t border-[var(--line)] space-y-2">
-            <button disabled={!isFunc} onClick={() => onDisassemble(symbol.name)} className="btn-hw primary w-full text-left" style={{ opacity: isFunc ? 1 : 0.4, cursor: isFunc ? "pointer" : "not-allowed" }}>⌬ disassemble {symbol.name}</button>
-            <button onClick={() => onShowSection(symbol.secName)} className="btn-hw w-full text-left">≣ show {symbol.secName} in symbol table</button>
+            <div className="mono text-[10px] mut uppercase tracking-wider mb-2">IDE Workspace Actions</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled={!isFunc}
+                title={!isFunc ? "Assembly unavailable for non-function symbol." : `Open assembly for ${symbol.name}`}
+                onClick={() => onOpenAssembly(symbol.name)}
+                className="btn-hw primary text-left truncate"
+                style={{ opacity: isFunc ? 1 : 0.4, cursor: isFunc ? "pointer" : "not-allowed" }}
+              >
+                ⌬ Open Assembly
+              </button>
+
+              <button
+                disabled={!hasObject}
+                title={!hasObject ? "No object file metadata available." : `Locate object file for ${symbol.name}`}
+                onClick={() => onOpenObject(symbol.name)}
+                className="btn-hw text-left truncate"
+                style={{ opacity: hasObject ? 1 : 0.4, cursor: hasObject ? "pointer" : "not-allowed" }}
+              >
+                ▦ Open Object
+              </button>
+
+              <button
+                onClick={() => onViewSource(symbol.name)}
+                className="btn-hw text-left truncate"
+                title={`View source for ${symbol.name}`}
+              >
+                📜 View Source
+              </button>
+
+              <button
+                onClick={() => onHighlightSection(symbol.secName)}
+                className="btn-hw text-left truncate"
+                title={`Highlight section ${symbol.secName}`}
+              >
+                ≣ Highlight Section
+              </button>
+
+              <button
+                disabled={!isFunc}
+                title={!isFunc ? "Callers unavailable for non-function symbol." : `Highlight direct callers of ${symbol.name}`}
+                onClick={() => onOpenCallers(symbol.name)}
+                className="btn-hw text-left truncate"
+                style={{ opacity: isFunc ? 1 : 0.4, cursor: isFunc ? "pointer" : "not-allowed" }}
+              >
+                ⑂ Open Callers
+              </button>
+
+              <button
+                disabled={!isFunc}
+                title={!isFunc ? "Callees unavailable for non-function symbol." : `Highlight callees of ${symbol.name}`}
+                onClick={() => onOpenCallees(symbol.name)}
+                className="btn-hw text-left truncate"
+                style={{ opacity: isFunc ? 1 : 0.4, cursor: isFunc ? "pointer" : "not-allowed" }}
+              >
+                ⑂ Open Callees
+              </button>
+            </div>
           </div>
         </>)}
 
         {tab === "asm" && (
-          <div className="flex flex-col items-center justify-center h-48 text-center">
-            <div className="text-4xl mb-2 mut">⌬</div>
-            <div className="mono text-[12px] fg">Assembly view</div>
-            <button disabled={!isFunc} onClick={() => onDisassemble(symbol.name)} className="btn-hw primary mt-3" style={{ opacity: isFunc ? 1 : 0.4 }}>open in disassembler</button>
+          <div className="flex flex-col items-center justify-center h-48 text-center space-y-3">
+            <div className="text-4xl mut">⌬</div>
+            <div className="mono text-[12px] fg">Disassembler Workspace</div>
+            <button
+              disabled={!isFunc}
+              title={!isFunc ? "Assembly unavailable for non-function symbol." : `Open disassembly for ${symbol.name}`}
+              onClick={() => onOpenAssembly(symbol.name)}
+              className="btn-hw primary"
+              style={{ opacity: isFunc ? 1 : 0.4 }}
+            >
+              Open in Disassembler
+            </button>
           </div>
         )}
         {tab === "refs" && (
-          <div className="flex flex-col items-center justify-center h-48 text-center">
-            <div className="text-4xl mb-2 mut">⑂</div>
-            <div className="mono text-[12px] fg">References & call graph</div>
-            <div className="mono text-[10px] mut mt-1">DWARF-based graph is the v1.5 lever.</div>
+          <div className="flex flex-col items-center justify-center h-48 text-center space-y-3">
+            <div className="text-4xl mut">⑂</div>
+            <div className="mono text-[12px] fg">Call Graph Relationships</div>
+            <div className="flex gap-2">
+              <button disabled={!isFunc} onClick={() => onOpenCallers(symbol.name)} className="btn-hw" style={{ opacity: isFunc ? 1 : 0.4 }}>
+                Show Callers
+              </button>
+              <button disabled={!isFunc} onClick={() => onOpenCallees(symbol.name)} className="btn-hw" style={{ opacity: isFunc ? 1 : 0.4 }}>
+                Show Callees
+              </button>
+            </div>
           </div>
         )}
       </div>

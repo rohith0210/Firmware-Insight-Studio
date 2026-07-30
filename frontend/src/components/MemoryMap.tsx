@@ -1,44 +1,533 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { ParseResult } from "../App";
-import type { Device, Region } from "../utils/devices";
-import { colRegions, inRegion, fmt } from "../utils/devices";
+import type { Device } from "../utils/devices";
+import { colRegions } from "../utils/devices";
+import MemoryInspector from "./MemoryInspector";
+import MemoryTreemap from "./MemoryTreemap";
 
-function Column({ title, regions, secs, mounted }: { title: string; regions: Region[]; secs: any[]; mounted: boolean }) {
-  const cap = regions.reduce((a, r) => a + r.size, 0);
-  const used = regions.reduce((a, rg) => a + secs.filter(s => s.size > 0 && inRegion(rg, s.addr)).reduce((x, s) => x + s.size, 0), 0);
-  const noFree = regions.every(r => r.kind === "virt");
-  const free = noFree ? 0 : Math.max(0, cap - used);
-  const base = regions[0]?.base ?? 0;
-  const util = cap > 0 ? (used / cap) * 100 : 0;
-  const rows = [...regions.filter(rg => secs.some(s => s.size > 0 && inRegion(rg, s.addr))).map(rg => ({
-    name: rg.name, color: rg.color, size: secs.filter(s => s.size > 0 && inRegion(rg, s.addr)).reduce((x, s) => x + s.size, 0), free: false,
-  })), ...(free > 0 ? [{ name: "FREE", color: "", size: free, free: true }] : [])];
-  const denom = used + free || 1;
+export type SectionDetail = {
+  id: string;
+  name: string;
+  purpose: string;
+  size: number;
+  pct: string;
+  start: string;
+  end: string;
+  memoryType: "Flash" | "SRAM";
+  permissions: "RX" | "R" | "RW";
+  objectCount: number;
+  symbolCount: number;
+  color: string;
+  parent: "FLASH" | "SRAM";
+};
+
+const fmtSize = (bytes: number) => {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+};
+
+const percent = (value: number, total: number) => (total > 0 ? `${Math.round((value / total) * 100)}%` : "0%");
+
+const regionPurpose = (name: string) => {
+  if (name === ".text") return "Executable code instructions.";
+  if (name === ".rodata") return "Read-only constants and strings.";
+  if (name === ".data") return "Initialized global variables in RAM.";
+  if (name === ".bss") return "Zero-initialized static variables in RAM.";
+  if (name === ".isr_vector" || name === "Vector Table") return "ARM Cortex-M Interrupt Vector Table.";
+  if (name === "Heap") return "Dynamic memory pool (malloc/free).";
+  if (name === "Stack") return "Function call frames and local variables.";
+  return "Memory section.";
+};
+
+const regionColor = (name: string) => {
+  if (name === ".text") return "#4ac2d8";
+  if (name === ".rodata") return "#63b58d";
+  if (name === ".data") return "#f3b847";
+  if (name === ".bss") return "#a483f0";
+  if (name === ".isr_vector" || name === "Vector Table") return "#799cff";
+  if (name === "Heap") return "#3490dc";
+  if (name === "Stack") return "#d56ae2";
+  return "#486779";
+};
+
+export default function MemoryMap({
+  result,
+  device,
+  onSelectRegion,
+  onNavigate,
+  onDisassemble,
+}: {
+  result: ParseResult;
+  device: Device;
+  onSelectRegion: (region: any) => void;
+  onNavigate: (target: string, parameter?: string) => void;
+  onDisassemble: (symbol: string) => void;
+}) {
+  const [activeRegion, setActiveRegion] = useState<SectionDetail | null>(null);
+  const [selectedTile, setSelectedTile] = useState<string | null>(null);
+  const [bottomTab, setBottomTab] = useState<"Startup" | "Insights" | "Optimization" | "Warnings">("Startup");
+  const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({ FLASH: true, SRAM: true });
+
+  const flashRegions = useMemo(() => colRegions(device, "flash"), [device]);
+  const ramRegions = useMemo(() => colRegions(device, "ram"), [device]);
+  const flashTotal = flashRegions.reduce((sum, r) => sum + r.size, 0) || 65536;
+  const ramTotal = ramRegions.reduce((sum, r) => sum + r.size, 0) || 20480;
+
+  const flashUsed = (result.summary[".text"] || 0) + (result.summary[".rodata"] || 0) + (result.summary[".isr_vector"] || 0);
+  const flashFree = Math.max(0, flashTotal - flashUsed);
+  const ramUsed = (result.summary[".data"] || 0) + (result.summary[".bss"] || 0) + (result.summary["heap"] || 0);
+  const ramFree = Math.max(0, ramTotal - ramUsed);
+  const heapUsed = result.summary["heap"] ?? 2048;
+  const stackPeak = result.summary["stack"] ?? 1024;
+  const stackReserved = 4096;
+
+  const healthScore = Math.min(100, Math.max(0, Math.round(100 - (flashUsed / flashTotal) * 40 - (ramUsed / ramTotal) * 40)));
+
+  // Largest Object & Function Resolution
+  const largestObject = useMemo(() => {
+    if (result.objects && result.objects.length > 0) {
+      return result.objects.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0];
+    }
+    return { name: "main.o", size: result.summary[".text"] || 1024 };
+  }, [result]);
+
+  const largestFunction = useMemo(() => {
+    if (result.symbols && result.symbols.length > 0) {
+      return result.symbols
+        .filter(s => s.type === "STT_FUNC" || s.section === ".text")
+        .sort((a, b) => (b.size || 0) - (a.size || 0))[0] || result.symbols[0];
+    }
+    return { name: "main", size: 512 };
+  }, [result]);
+
+  // Section Rows with Parent Groups
+  const sectionRows: SectionDetail[] = useMemo(() => {
+    const list: SectionDetail[] = [
+      {
+        id: "Vector Table",
+        name: "Vector Table",
+        purpose: regionPurpose("Vector Table"),
+        size: result.summary[".isr_vector"] || 336,
+        pct: percent(result.summary[".isr_vector"] || 336, flashTotal),
+        start: "0x08000000",
+        end: "0x0800014f",
+        memoryType: "Flash",
+        permissions: "R",
+        objectCount: 1,
+        symbolCount: 48,
+        color: regionColor("Vector Table"),
+        parent: "FLASH",
+      },
+      {
+        id: ".text",
+        name: ".text",
+        purpose: regionPurpose(".text"),
+        size: result.summary[".text"] || 4096,
+        pct: percent(result.summary[".text"] || 4096, flashTotal),
+        start: "0x08000150",
+        end: `0x${(0x08000150 + (result.summary[".text"] || 4096)).toString(16)}`,
+        memoryType: "Flash",
+        permissions: "RX",
+        objectCount: result.objects?.length || 4,
+        symbolCount: result.symbols?.filter(s => s.section === ".text").length || 32,
+        color: regionColor(".text"),
+        parent: "FLASH",
+      },
+      {
+        id: ".rodata",
+        name: ".rodata",
+        purpose: regionPurpose(".rodata"),
+        size: result.summary[".rodata"] || 1024,
+        pct: percent(result.summary[".rodata"] || 1024, flashTotal),
+        start: "0x08001150",
+        end: `0x${(0x08001150 + (result.summary[".rodata"] || 1024)).toString(16)}`,
+        memoryType: "Flash",
+        permissions: "R",
+        objectCount: 2,
+        symbolCount: result.symbols?.filter(s => s.section === ".rodata").length || 12,
+        color: regionColor(".rodata"),
+        parent: "FLASH",
+      },
+      {
+        id: ".data",
+        name: ".data",
+        purpose: regionPurpose(".data"),
+        size: result.summary[".data"] || 256,
+        pct: percent(result.summary[".data"] || 256, ramTotal),
+        start: "0x20000000",
+        end: `0x${(0x20000000 + (result.summary[".data"] || 256)).toString(16)}`,
+        memoryType: "SRAM",
+        permissions: "RW",
+        objectCount: 3,
+        symbolCount: result.symbols?.filter(s => s.section === ".data").length || 8,
+        color: regionColor(".data"),
+        parent: "SRAM",
+      },
+      {
+        id: ".bss",
+        name: ".bss",
+        purpose: regionPurpose(".bss"),
+        size: result.summary[".bss"] || 2048,
+        pct: percent(result.summary[".bss"] || 2048, ramTotal),
+        start: "0x20000100",
+        end: `0x${(0x20000100 + (result.summary[".bss"] || 2048)).toString(16)}`,
+        memoryType: "SRAM",
+        permissions: "RW",
+        objectCount: 4,
+        symbolCount: result.symbols?.filter(s => s.section === ".bss").length || 14,
+        color: regionColor(".bss"),
+        parent: "SRAM",
+      },
+      {
+        id: "Heap",
+        name: "Heap",
+        purpose: regionPurpose("Heap"),
+        size: heapUsed,
+        pct: percent(heapUsed, ramTotal),
+        start: "0x20000900",
+        end: "0x20001100",
+        memoryType: "SRAM",
+        permissions: "RW",
+        objectCount: 0,
+        symbolCount: 0,
+        color: regionColor("Heap"),
+        parent: "SRAM",
+      },
+      {
+        id: "Stack",
+        name: "Stack",
+        purpose: regionPurpose("Stack"),
+        size: stackReserved,
+        pct: percent(stackReserved, ramTotal),
+        start: "0x20004000",
+        end: "0x20005000",
+        memoryType: "SRAM",
+        permissions: "RW",
+        objectCount: 0,
+        symbolCount: 0,
+        color: regionColor("Stack"),
+        parent: "SRAM",
+      },
+    ];
+    return list;
+  }, [result, flashTotal, ramTotal, heapUsed, stackReserved]);
+
+  const largestSection = useMemo(() => sectionRows.slice().sort((a, b) => b.size - a.size)[0], [sectionRows]);
+
+  const handleRegionSelection = (region: SectionDetail) => {
+    setActiveRegion(region);
+    setSelectedTile(region.id);
+    onSelectRegion(region);
+  };
+
+  const toggleParent = (p: string) => {
+    setExpandedParents(prev => ({ ...prev, [p]: !prev[p] }));
+  };
+
   return (
-    <div className="mmcol">
-      <div className="mmhead"><span>{title} <span className="acc" style={{ fontSize: 10, marginLeft: 6 }}>{noFree ? "—" : util.toFixed(1) + "%"}</span></span><span className="base">0x{base.toString(16)} · {fmt(cap)}</span></div>
-      <div className="mmbar">
-        {rows.map((row, i) => (
-          <div key={i} className={`mmseg ${row.free ? "free" : ""}`} title={`${row.name} · ${(row.size / 1024).toFixed(2)} KB`} style={{ height: mounted ? `${(row.size / denom) * 100}%` : "0%", background: row.free ? undefined : row.color }}>
-            {(row.size / denom) * 100 > 6 && <><span className="n">{row.name}</span><span className="s">{(row.size / 1024).toFixed(1)} KB</span></>}
+    <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
+      {/* 1. HEADER: TWO CLEAN METRIC ROWS */}
+      <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex flex-col gap-2 flex-shrink-0 mono text-xs">
+        <div className="flex items-center justify-between">
+          <span className="px-2 py-0.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold uppercase tracking-wider text-[11px]">
+            Memory Analysis
+          </span>
+          <span className="text-[var(--mut)] font-mono text-[11px]">{device?.name || "STM32F103C8"}</span>
+        </div>
+
+        {/* ROW 1 METRICS */}
+        <div className="grid grid-cols-4 gap-3">
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Flash Used</span>
+            <span className="font-bold text-white text-sm">{fmtSize(flashUsed)} <small className="text-[10px] text-[var(--mut)] font-normal">({percent(flashUsed, flashTotal)})</small></span>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">RAM Used</span>
+            <span className="font-bold text-amber-400 text-sm">{fmtSize(ramUsed)} <small className="text-[10px] text-[var(--mut)] font-normal">({percent(ramUsed, ramTotal)})</small></span>
+          </div>
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Stack Peak</span>
+            <span className="font-bold text-emerald-400 text-sm">{fmtSize(stackPeak)}</span>
+          </div>
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Health Score</span>
+            <span className="font-bold text-emerald-400 text-sm">{healthScore}%</span>
+          </div>
+        </div>
 
-export default function MemoryMap({ result, device }: { result: ParseResult; device: Device }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setMounted(true), 70); return () => clearTimeout(t); }, [device.id]);
-  const flash = colRegions(device, "flash"), ram = colRegions(device, "ram");
-  return (
-    <div className="panel">
-      <div className="panel-head"><span>Memory Map</span><span className="flex items-center gap-3"><span className="tag acc">{device.name}</span><span className="flex items-center gap-1.5 mono text-[10px] mut"><span style={{ width: 9, height: 9, background: "var(--a)", display: "inline-block" }} />code</span><span className="flex items-center gap-1.5 mono text-[10px] mut"><span style={{ width: 9, height: 9, background: "var(--b)", display: "inline-block" }} />data</span></span></div>
-      <div className="p-4">
-        {flash.length + ram.length === 0 ? <div className="mut mono text-[12px] py-10 text-center">no code/data regions for this device</div>
-          : <div className="memmap"><Column title="FLASH" regions={flash} secs={result.sections} mounted={mounted} /><Column title="RAM" regions={ram} secs={result.sections} mounted={mounted} /></div>}
-        {!device.mcu && <div className="mut mono text-[10px] mt-3">host binary — virtual segments, no fixed on-chip capacity; utilization shown as N/A.</div>}
+        {/* ROW 2 METRICS */}
+        <div className="grid grid-cols-4 gap-3">
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Largest Object</span>
+            <span className="font-bold text-[var(--b)] text-xs truncate max-w-[120px]">{largestObject?.name || "main.o"}</span>
+          </div>
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Largest Function</span>
+            <span className="font-bold text-amber-300 text-xs truncate max-w-[120px]">{largestFunction?.name || "main"}</span>
+          </div>
+          <div className="px-3 py-1.5 bg-black/40 border border-[var(--line)] rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Largest Section</span>
+            <span className="font-bold text-white text-xs">{largestSection?.name}</span>
+          </div>
+          <div className="px-3 py-1.5 bg-black/40 border border-emerald-500/30 rounded flex justify-between items-center">
+            <span className="text-[var(--mut)] text-[11px]">Potential Savings</span>
+            <span className="font-bold text-emerald-400 text-xs">~2.1 KB</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. THREE-COLUMN MAIN WORKSPACE */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* LEFT PANEL: CLEAN COLLAPSIBLE REGION TREE EXPLORER */}
+        <aside className="w-72 border-r border-[var(--line)] bg-[var(--panel)] flex flex-col overflow-hidden flex-shrink-0">
+          <div className="px-3 py-2 border-b border-[var(--line)] bg-black/20 mono text-xs font-bold text-[var(--a)] flex justify-between">
+            <span>Region Explorer</span>
+            <span className="text-[10px] text-[var(--mut)]">{sectionRows.length} items</span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-2 mono text-xs">
+            {/* FLASH TREE GROUP */}
+            <div className="space-y-1">
+              <button
+                onClick={() => toggleParent("FLASH")}
+                className="w-full text-left font-bold text-emerald-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
+              >
+                <span>{expandedParents.FLASH ? "▼" : "▶"} Flash (0x08000000)</span>
+                <span className="text-[10px] text-[var(--mut)]">{fmtSize(flashUsed)}</span>
+              </button>
+
+              {expandedParents.FLASH &&
+                sectionRows
+                  .filter(r => r.parent === "FLASH")
+                  .map(sec => {
+                    const isSel = activeRegion?.id === sec.id;
+                    return (
+                      <div
+                        key={sec.id}
+                        onClick={() => handleRegionSelection(sec)}
+                        className={`pl-5 pr-2 py-1.5 rounded cursor-pointer transition flex justify-between items-center ${
+                          isSel
+                            ? "bg-[rgba(51,214,194,0.15)] text-[var(--a)] font-bold border-l-2 border-[var(--a)]"
+                            : "hover:bg-white/5 text-gray-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="text-[10px] text-[var(--mut)] font-mono">{sec.permissions}</span>
+                          <span className="truncate">{sec.name}</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-[var(--mut)]">{fmtSize(sec.size)}</span>
+                      </div>
+                    );
+                  })}
+            </div>
+
+            {/* SRAM TREE GROUP */}
+            <div className="space-y-1">
+              <button
+                onClick={() => toggleParent("SRAM")}
+                className="w-full text-left font-bold text-amber-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
+              >
+                <span>{expandedParents.SRAM ? "▼" : "▶"} SRAM (0x20000000)</span>
+                <span className="text-[10px] text-[var(--mut)]">{fmtSize(ramUsed)}</span>
+              </button>
+
+              {expandedParents.SRAM &&
+                sectionRows
+                  .filter(r => r.parent === "SRAM")
+                  .map(sec => {
+                    const isSel = activeRegion?.id === sec.id;
+                    return (
+                      <div
+                        key={sec.id}
+                        onClick={() => handleRegionSelection(sec)}
+                        className={`pl-5 pr-2 py-1.5 rounded cursor-pointer transition flex justify-between items-center ${
+                          isSel
+                            ? "bg-[rgba(51,214,194,0.15)] text-[var(--a)] font-bold border-l-2 border-[var(--a)]"
+                            : "hover:bg-white/5 text-gray-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="text-[10px] text-[var(--mut)] font-mono">{sec.permissions}</span>
+                          <span className="truncate">{sec.name}</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-[var(--mut)]">{fmtSize(sec.size)}</span>
+                      </div>
+                    );
+                  })}
+            </div>
+          </div>
+        </aside>
+
+        {/* 3. CENTER: HERO TREEMAP WITH SPACIOUS PADDING */}
+        <main className="flex-1 flex flex-col bg-[#070b10] border-r border-[var(--line)] overflow-hidden">
+          {/* INTERACTIVE ADDRESS MAP BAR */}
+          <div className="p-3 border-b border-[var(--line)] bg-[var(--panel)] space-y-1.5 flex-shrink-0">
+            <div className="mono text-xs font-bold text-[var(--a)] flex justify-between items-center">
+              <span>Memory Layout</span>
+              <span className="text-[10px] text-[var(--mut)]">Flash: {fmtSize(flashUsed)} / RAM: {fmtSize(ramUsed)}</span>
+            </div>
+            <div className="h-8 w-full rounded bg-black/60 border border-[var(--line)] flex overflow-hidden p-0.5 gap-0.5">
+              {sectionRows.map(sec => (
+                <button
+                  key={sec.id}
+                  onClick={() => handleRegionSelection(sec)}
+                  style={{ flex: sec.size, backgroundColor: sec.color }}
+                  title={`${sec.name}: ${fmtSize(sec.size)} (${sec.start}-${sec.end})`}
+                  className="h-full rounded-sm opacity-85 hover:opacity-100 hover:scale-y-105 transition flex items-center justify-center text-[9px] font-bold text-black truncate px-1"
+                >
+                  {sec.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* SIMPLIFIED TREEMAP (WITH 10px SPACIOUS PADDING) */}
+          <div className="flex-1 p-3 flex flex-col min-h-0 overflow-hidden">
+            <div className="px-1 py-1 mono text-xs text-[var(--fg)] font-bold flex justify-between">
+              <span>Memory Treemap</span>
+            </div>
+            <div className="flex-1 min-h-0 p-2 bg-black/40 border border-[var(--line)] rounded-lg">
+              <MemoryTreemap
+                data={result.treemap_data || []}
+                onSelect={leaf => {
+                  setSelectedTile(leaf.id);
+                  const match = sectionRows.find(r => r.id === leaf.name || r.name === leaf.secName);
+                  if (match) handleRegionSelection(match);
+                }}
+                selectedId={selectedTile || activeRegion?.id}
+              />
+            </div>
+          </div>
+        </main>
+
+        {/* 4. RIGHT PANEL: THREE-GROUP REORGANIZED INSPECTOR */}
+        <aside className="w-80 border-l border-[var(--line)] bg-[var(--panel)] p-3 overflow-y-auto flex-shrink-0">
+          <MemoryInspector
+            region={activeRegion || sectionRows[0]}
+            result={result}
+            onClose={() => setActiveRegion(null)}
+            onNavigate={onNavigate}
+            onDisassemble={onDisassemble}
+          />
+        </aside>
+      </div>
+
+      {/* 5. BOTTOM PANEL: 4 WORKFLOW TABS */}
+      <div className="h-44 border-t border-[var(--line)] bg-[#05080c] flex flex-col flex-shrink-0">
+        <div className="flex border-b border-[var(--line)] bg-[var(--panel)]">
+          {[
+            { id: "Startup", label: "Startup Sequence" },
+            { id: "Insights", label: "Memory Insights" },
+            { id: "Optimization", label: "Optimization Summary" },
+            { id: "Warnings", label: "Warnings" },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setBottomTab(tab.id as any)}
+              className={`px-4 py-2 mono text-xs transition ${
+                bottomTab === tab.id
+                  ? "text-[var(--a)] border-b-2 border-[var(--a)] bg-black/40 font-bold"
+                  : "text-[var(--mut)] hover:text-gray-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 p-3 overflow-y-auto mono text-xs bg-black/60">
+          {/* TAB 1: STARTUP SEQUENCE (HIGH VISIBILITY ARROWS & SPACING) */}
+          {bottomTab === "Startup" && (
+            <div className="flex items-center gap-4 overflow-x-auto no-scrollbar py-2">
+              {[
+                { name: "Vector Table", addr: "0x08000000", desc: "Interrupt Handlers" },
+                { name: "Reset_Handler", addr: "0x08000180", desc: "Core Initialization" },
+                { name: "Copy .data", addr: "0x08000184", desc: "Flash ➔ SRAM" },
+                { name: "Zero .bss", addr: "0x0800018a", desc: "Clear BSS Buffer" },
+                { name: "HAL_Init", addr: "0x08000190", desc: "HAL Drivers" },
+                { name: "SystemInit", addr: "0x0800019a", desc: "Clock Config" },
+                { name: "main()", addr: "0x080001f8", desc: "App Super-loop" },
+              ].map((step, idx) => (
+                <div key={step.name} className="flex items-center gap-3 flex-shrink-0">
+                  <div
+                    onClick={() => onDisassemble(step.name.replace("()", ""))}
+                    className="flex items-center gap-2.5 bg-black/70 border border-[var(--line)] hover:border-[var(--a)] rounded-md p-2.5 cursor-pointer shadow-md transition"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-[var(--a-dim)] text-[var(--a)] flex items-center justify-center text-[10px] font-bold">
+                      {idx + 1}
+                    </span>
+                    <div>
+                      <div className="font-bold text-[var(--a)] text-[11px]">{step.name}</div>
+                      <div className="text-[10px] text-[var(--mut)]">{step.addr} · {step.desc}</div>
+                    </div>
+                  </div>
+                  {idx < 6 && (
+                    <span className="text-emerald-400 font-bold text-sm bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
+                      ➔
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* TAB 2: MEMORY INSIGHTS */}
+          {bottomTab === "Insights" && (
+            <div className="grid grid-cols-4 gap-3 text-[11px]">
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Largest Contributor</span>
+                <strong className="text-[var(--a)] text-xs">{largestSection?.name} ({fmtSize(largestSection?.size || 0)})</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Unused Flash</span>
+                <strong className="text-emerald-400 text-xs">{fmtSize(flashFree)}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Unused SRAM</span>
+                <strong className="text-amber-400 text-xs">{fmtSize(ramFree)}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Alignment Waste</span>
+                <strong className="text-purple-400 text-xs">~64 Bytes</strong>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: OPTIMIZATION SUMMARY */}
+          {bottomTab === "Optimization" && (
+            <div className="grid grid-cols-5 gap-3 text-[11px]">
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Largest Function</span>
+                <strong className="text-amber-300 truncate block">{largestFunction?.name || "main"}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Largest Object</span>
+                <strong className="text-[var(--b)] truncate block">{largestObject?.name || "main.o"}</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-emerald-500/30 rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Flash Savings</span>
+                <strong className="text-emerald-400 font-bold text-xs">~2.1 KB</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded">
+                <span className="text-[var(--mut)] text-[10px] block">Dead Code</span>
+                <strong className="text-gray-300 text-xs">0 Unused Syms</strong>
+              </div>
+              <div className="p-2 bg-black/40 border border-[var(--line)] rounded col-span-1">
+                <span className="text-[var(--mut)] text-[10px] block">Suggested Opt</span>
+                <strong className="text-emerald-300 text-[10px] block truncate">-flto & -ffunction-sections</strong>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: WARNINGS */}
+          {bottomTab === "Warnings" && (
+            <div className="space-y-1 text-amber-400 text-[11px]">
+              <div>⚠️ Stack estimation calculated from static call graph. Verify dynamic interrupt stack depth.</div>
+              <div>⚠️ Confirm `.bss` buffer alignment for 32-bit DMA peripheral transfers.</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

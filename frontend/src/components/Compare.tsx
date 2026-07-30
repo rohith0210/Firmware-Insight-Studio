@@ -1,4 +1,4 @@
-import { useRef, useState, DragEvent } from "react";
+import { useRef, useState, type DragEvent } from "react";
 import type { ParseResult } from "../App";
 const KB = (b: number) => (b / 1024).toFixed(2);
 const sign = (d: number) => (d > 0 ? "+" : "");

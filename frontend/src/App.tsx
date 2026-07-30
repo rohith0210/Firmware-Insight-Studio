@@ -1,9 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import Ribbon from "./components/Ribbon";
 import Overview from "./components/Overview";
 import MemoryMap from "./components/MemoryMap";
-import MemoryTreemap, { type LR } from "./components/MemoryTreemap";
 import LinkerScript from "./components/LinkerScript";
 import SectionTable from "./components/SectionTable";
 import SymbolExplorer from "./components/SymbolExplorer";
@@ -12,6 +11,8 @@ import DeadCode from "./components/DeadCode";
 import Compare from "./components/Compare";
 import Disassembler from "./components/Disassembler";
 import ObjectFiles from "./components/ObjectFiles";
+import SourceViewer from "./components/SourceViewer";
+import InvestigationWorkspace from "./components/InvestigationWorkspace";
 import IsrAnalyzer from "./components/IsrAnalyzer";
 import Peripherals from "./components/Peripherals";
 import Optimize from "./components/Optimize";
@@ -21,7 +22,9 @@ import Fragmentation from "./components/Fragmentation";
 import Uploader from "./components/Uploader";
 import Locked from "./components/Locked";
 import InspectorPanel from "./components/InspectorPanel";
-import { detectDevice, DB, DB_ORDER } from "./utils/devices";
+import { detectDevice, DB } from "./utils/devices";
+
+import DeviceExplorer from "./components/DeviceExplorer";
 
 export type ParseResult = {
   filename: string; arch: string; entry: string;
@@ -34,9 +37,56 @@ export type ParseResult = {
   call_graph: { nodes: Array<{ id: string; label: string; type: string }>; edges: Array<{ source: string; target: string; animated?: boolean }> };
   dead_code?: { items: any[]; reclaimable: number; referenced_count: number };
   objects?: any[]; isrs?: any[]; peripherals?: any[]; build_config?: any;
+  has_debug_symbols?: boolean;
 };
-export type View = "overview" | "memory" | "layout" | "sections" | "symbols" | "objects" | "callgraph" | "debug" | "isr" | "periph" | "config" | "optimize" | "compare" | "timeline" | "frag" | "deadcode" | "reports" | "settings";
-const TITLES: Record<View, string> = { overview: "Firmware Overview", memory: "Memory Analysis", layout: "Memory Layout", sections: "Section Layout", symbols: "Symbol Table", objects: "Object Files", callgraph: "Call Graph", debug: "Disassembler", isr: "ISR Analyzer", periph: "Peripheral Usage", config: "Build Configuration", optimize: "Optimization Assistant", compare: "Build Compare", timeline: "Build Timeline", frag: "Heap Fragmentation", deadcode: "Dead Code", reports: "Reports", settings: "Settings" };
+
+export type View =
+  | "investigator"
+  | "overview"
+  | "memory"
+  | "layout"
+  | "sections"
+  | "symbols"
+  | "objects"
+  | "callgraph"
+  | "debug"
+  | "source"
+  | "isr"
+  | "periph"
+  | "config"
+  | "optimize"
+  | "compare"
+  | "timeline"
+  | "frag"
+  | "deadcode"
+  | "reports"
+  | "settings"
+  | "dev_explorer";
+
+const TITLES: Record<View, string> = {
+  investigator: "Code Investigator Workspace",
+  overview: "Firmware Overview",
+  memory: "Memory Analysis",
+  layout: "Memory Layout",
+  sections: "Section Layout",
+  symbols: "Symbol Table",
+  objects: "Object Files",
+  callgraph: "Call Graph",
+  debug: "Disassembler",
+  source: "Source Viewer",
+  isr: "ISR Analyzer",
+  periph: "Peripheral Usage",
+  config: "Build Configuration",
+  optimize: "Optimization Assistant",
+  compare: "Build Compare",
+  timeline: "Build Timeline",
+  frag: "Heap Fragmentation",
+  deadcode: "Dead Code",
+  reports: "Reports",
+  settings: "Settings",
+  dev_explorer: "Device Explorer",
+};
+
 const TL_KEY = "fis_timeline_v1";
 
 async function parseFile(file: File): Promise<ParseResult> {
@@ -46,6 +96,8 @@ async function parseFile(file: File): Promise<ParseResult> {
   return res.json();
 }
 
+type Toast = { id: number; message: string; type: "info" | "success" | "warning" | "error" };
+
 export default function App() {
   const [result, setResult] = useState<ParseResult | null>(null);
   const [resultB, setResultB] = useState<ParseResult | null>(null);
@@ -54,11 +106,20 @@ export default function App() {
   const [view, setView] = useState<View>("overview");
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
   const [accent, setAccent] = useState<"signal" | "phosphor">("signal");
-  const [scanline, setScanline] = useState(true);
   const [deviceOverride, setDeviceOverride] = useState<string>("");
   const [disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
-  const [selectedSymbol, setSelectedSymbol] = useState<LR | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<any | null>(null);
+  const [, setCallGraphTarget] = useState<{ symbol: string; mode: "callers" | "callees" | "symbol" } | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [history, setHistory] = useState<Snap[]>(() => { try { return JSON.parse(localStorage.getItem(TL_KEY) || "[]"); } catch { return []; } });
+
+  const addToast = useCallback((message: string, type: "info" | "success" | "warning" | "error" = "info") => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t.slice(-3), { id, message, type }]);
+    setTimeout(() => {
+      setToasts(t => t.filter(item => item.id !== id));
+    }, 3200);
+  }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = accent; }, [accent]);
   useEffect(() => { localStorage.setItem(TL_KEY, JSON.stringify(history)); }, [history]);
@@ -71,67 +132,284 @@ export default function App() {
     setHistory(h => (h[h.length - 1]?.checksum === snap.checksum ? h : [...h, snap].slice(-40)));
   }, [result?.checksum]);
 
-  const handleUpload = async (file: File) => { setLoading(true); setError(null); setSelectedSection(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); setView("overview"); try { setResult(await parseFile(file)); } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
-  const handleCompare = async (file: File) => { setError(null); try { setResultB(await parseFile(file)); } catch (e: any) { setError(e.message); } };
-  const inspect = (n: string) => { setDisasmTarget({ name: n, nonce: Date.now() }); setView("debug"); };
-  const showSection = (sec: string) => { setSelectedSection(sec); setView("symbols"); };
-  const download = (blob: Blob, name: string) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
-  const exportJSON = () => result && download(new Blob([JSON.stringify({ base: result, candidate: resultB, device: device?.name, history }, null, 2)], { type: "application/json" }), `${result.filename}_analysis.json`);
-  const exportCSV = () => { if (!result) return; const rows = [["Name", "Section", "Address", "SizeBytes", "Type"], ...result.symbols.map(s => [s.name, s.section, "0x" + s.value.toString(16), String(s.size), s.type])]; download(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }), `${result.filename}_symbols.csv`); };
-  const filteredSymbols = selectedSection ? result?.symbols.filter(s => s.section === selectedSection) || [] : result?.symbols || [];
+  const handleUpload = async (file: File) => {
+    setLoading(true);
+    setError(null);
+    setSelectedSection(null);
+    setResultB(null);
+    setDeviceOverride("");
+    setSelectedSymbol(null);
+    setView("overview");
+    try {
+      setResult(await parseFile(file));
+      addToast("Firmware binary parsed successfully", "success");
+    } catch (e: any) {
+      setError(e.message);
+      addToast(`Parsing error: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCompare = async (file: File) => {
+    setError(null);
+    try {
+      setResultB(await parseFile(file));
+      addToast("Comparison binary loaded", "info");
+    } catch (e: any) {
+      setError(e.message);
+      addToast(`Compare error: ${e.message}`, "error");
+    }
+  };
+
+  const exportJSON = () => {
+    if (!result) return;
+    const blob = new Blob([JSON.stringify({ ...result, active_device: device }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${result.filename}.insight.json`; a.click();
+    addToast("Exported JSON report", "success");
+  };
+
+  const exportCSV = () => {
+    if (!result) return;
+    const lines = ["Name,Section,Address,Size"];
+    result.symbols.forEach(s => lines.push(`"${s.name}","${s.section}",0x${s.value.toString(16)},${s.size}`));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${result.filename}.symbols.csv`; a.click();
+    addToast("Exported CSV symbol table", "success");
+  };
+
+  const handleSelectSymbol = useCallback((sym: any) => {
+    if (!sym) return;
+    setSelectedSymbol(sym);
+  }, []);
+
+  const handleOpenAssembly = useCallback((symName: string) => {
+    setDisasmTarget({ name: symName, nonce: Date.now() });
+    setView("debug");
+    addToast(`Disassembling ${symName}`, "info");
+  }, [addToast]);
+
+  const handleOpenObject = useCallback((objName: string) => {
+    setView("objects");
+    addToast(`Filtering to object: ${objName}`, "info");
+  }, [addToast]);
+
+  const handleViewSource = useCallback((symName: string) => {
+    setView("source");
+    addToast(`Loading source context for ${symName}`, "info");
+  }, [addToast]);
+
+  const handleHighlightSection = useCallback((secName: string) => {
+    setSelectedSection(secName);
+    setView("sections");
+    addToast(`Highlighted section ${secName}`, "info");
+  }, [addToast]);
+
+  const handleOpenCallers = useCallback((symName: string) => {
+    setCallGraphTarget({ symbol: symName, mode: "callers" });
+    setView("callgraph");
+    addToast(`Showing callers of ${symName}`, "info");
+  }, [addToast]);
+
+  const handleOpenCallees = useCallback((symName: string) => {
+    setCallGraphTarget({ symbol: symName, mode: "callees" });
+    setView("callgraph");
+    addToast(`Showing callees of ${symName}`, "info");
+  }, [addToast]);
+
+  if (!result) {
+    return <Uploader onUpload={handleUpload} loading={loading} />;
+  }
 
   const renderView = () => {
-    if (!result || !device) return <Uploader onUpload={handleUpload} loading={loading} />;
     switch (view) {
-      case "overview": return <Overview result={result} device={device} />;
-      case "memory": return <div className="space-y-5"><MemoryMap result={result} device={device} />{result.treemap_data.length > 0 && <MemoryTreemap data={result.treemap_data} onSelect={setSelectedSymbol} selectedId={selectedSymbol?.id} />}</div>;
-      case "layout": return <LinkerScript result={result} device={device} />;
-      case "sections": return <SectionTable sections={result.sections} symbols={result.symbols} onSectionClick={setSelectedSection} selectedSection={selectedSection} />;
-      case "symbols": return <SymbolExplorer symbols={filteredSymbols} title={selectedSection ? `Symbols // ${selectedSection}` : "Symbol Table"} />;
-      case "objects": return <ObjectFiles result={result} />;
-      case "callgraph": return result.call_graph.nodes.length > 0 ? <CallGraph data={result.call_graph} /> : <Locked name="Call Graph" note="No function symbols resolved in this binary." />;
-      case "debug": return <Disassembler result={result} target={disasmTarget} />;
-      case "isr": return <IsrAnalyzer result={result} />;
-      case "periph": return <Peripherals result={result} />;
-      case "config": return <BuildConfig result={result} />;
-      case "optimize": return <Optimize result={result} />;
-      case "compare": return <Compare base={result} candidate={resultB} onLoad={handleCompare} onClear={() => setResultB(null)} />;
-      case "timeline": return <Timeline history={history} onClear={() => setHistory([])} />;
-      case "frag": return <Fragmentation />;
-      case "deadcode": return <DeadCode data={result.dead_code} />;
-      case "reports": return <Reports onJSON={exportJSON} onCSV={exportCSV} />;
-      case "settings": return <Settings accent={accent} setAccent={setAccent} scanline={scanline} setScanline={setScanline} device={device} override={deviceOverride} setOverride={setDeviceOverride} />;
-      default: return <Locked name={TITLES[view]} note="wired" />;
+      case "investigator":
+        return (
+          <InvestigationWorkspace
+            result={result}
+            device={device!}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={handleSelectSymbol}
+            onNavigateView={(target, param) => {
+              if (target === "debug" && param) handleOpenAssembly(param);
+              else setView(target as View);
+            }}
+          />
+        );
+      case "overview":
+        return <Overview result={result} device={device!} />;
+      case "memory":
+        return <MemoryMap result={result} device={device!} onSelectRegion={() => {}} onNavigate={(target: any) => setView(target)} onDisassemble={handleOpenAssembly} />;
+      case "layout":
+        return <LinkerScript result={result} device={device!} />;
+      case "sections":
+        return <SectionTable sections={result.sections} symbols={result.symbols} selectedSection={selectedSection} onSectionClick={setSelectedSection} />;
+      case "symbols":
+        return <SymbolExplorer symbols={result.symbols} onSelectSymbol={handleSelectSymbol} />;
+      case "objects":
+        return <ObjectFiles result={result} />;
+      case "source":
+        return <SourceViewer result={result} />;
+      case "callgraph":
+        return result.call_graph && result.call_graph.nodes.length > 0 ? (
+          <CallGraph data={result.call_graph} result={result} device={device!} />
+        ) : (
+          <Locked name="Call Graph" note="No function symbols resolved in this binary." />
+        );
+      case "debug":
+        return <Disassembler result={result} target={disasmTarget} />;
+      case "isr":
+        return <IsrAnalyzer result={result} />;
+      case "periph":
+        return <Peripherals result={result} />;
+      case "config":
+        return <BuildConfig result={result} />;
+      case "optimize":
+        return <Optimize result={result} device={device!} history={history} onNavigate={(target, symbol) => { if (target === "debug" && symbol) handleOpenAssembly(symbol); else setView(target as View); }} />;
+      case "compare":
+        return <Compare base={result} candidate={resultB} onLoad={handleCompare} onClear={() => setResultB(null)} />;
+      case "timeline":
+        return <Timeline history={history} onClear={() => setHistory([])} />;
+      case "frag":
+        return <Fragmentation />;
+      case "deadcode":
+        return <DeadCode data={result.dead_code} />;
+      case "reports":
+        return <Reports onJSON={exportJSON} onCSV={exportCSV} selectedSymbol={selectedSymbol} />;
+      case "settings":
+        return <Settings accent={accent} setAccent={setAccent} device={device} setOverride={setDeviceOverride} />;
+
+      // UNIFIED DEVICE EXPLORER
+      case "dev_explorer":
+        return (
+          <DeviceExplorer
+            activeDevice={device!}
+            result={result}
+            override={deviceOverride}
+            onSelectDevice={setDeviceOverride}
+            onNavigate={(v, target) => {
+              setView(v);
+              if (target) handleOpenAssembly(target);
+            }}
+          />
+        );
+
+      default:
+        return <Locked name={TITLES[view] || view} note="wired" />;
     }
   };
 
   return (
     <>
       <div className="app-bg" />
-      {scanline && <div className="scanline" />}
       <div className="shell" style={{ height: "100vh", overflow: "hidden" }}>
         <Sidebar view={view} setView={setView} hasResult={!!result} />
         <div className="main" style={{ overflow: "hidden" }}>
-          <Ribbon title={TITLES[view]} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} />
+          <Ribbon title={TITLES[view] || view} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} />
           <div className="flex flex-1" style={{ minHeight: 0 }}>
             <div className="view flex-1 overflow-auto" style={{ minWidth: 0 }} key={view + (result ? result.filename : "empty") + (resultB ? resultB.filename : "")}>
               {error && <div className="mb-4 p-3 border rounded-[3px] mono text-[12px]" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "rgba(224,86,107,.08)" }}>ERR // {error}</div>}
               {renderView()}
             </div>
             {selectedSymbol && result && device && (
-              <InspectorPanel symbol={selectedSymbol} result={result} device={device} onClose={() => setSelectedSymbol(null)} onSelect={setSelectedSymbol} onDisassemble={inspect} onShowSection={showSection} />
+              <InspectorPanel
+                symbol={selectedSymbol}
+                result={result}
+                device={device}
+                onClose={() => setSelectedSymbol(null)}
+                onSelect={setSelectedSymbol}
+                onOpenAssembly={handleOpenAssembly}
+                onOpenObject={handleOpenObject}
+                onViewSource={handleViewSource}
+                onHighlightSection={handleHighlightSection}
+                onOpenCallers={handleOpenCallers}
+                onOpenCallees={handleOpenCallees}
+              />
             )}
           </div>
         </div>
+      </div>
+
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
+        {toasts.map(t => (
+          <div
+            key={t.id}
+            className={`pointer-events-auto px-4 py-2.5 rounded-lg border shadow-xl backdrop-blur-md mono text-[12px] flex items-center gap-2.5 transition-all duration-300 ${
+              t.type === "success"
+                ? "bg-[rgba(51,214,194,0.12)] border-[var(--a)] text-[#d6fff9]"
+                : t.type === "error"
+                ? "bg-[rgba(224,86,107,0.15)] border-[var(--danger)] text-[#ffcdd2]"
+                : t.type === "warning"
+                ? "bg-[rgba(240,168,48,0.15)] border-[var(--b)] text-[#ffecb3]"
+                : "bg-[rgba(10,16,26,0.92)] border-[var(--line2)] fg"
+            }`}
+            style={{ animation: "tmSlide .25s ease-out" }}
+          >
+            <span className="text-base">{t.type === "success" ? "✓" : t.type === "error" ? "⚠" : "⚡"}</span>
+            <span>{t.message}</span>
+          </div>
+        ))}
       </div>
     </>
   );
 }
 
-function Reports({ onJSON, onCSV }: { onJSON: () => void; onCSV: () => void }) {
-  return (<div className="panel"><div className="panel-head"><span>Reports</span><span className="tag">export analysis</span></div><div className="p-5 grid sm:grid-cols-2 gap-4"><button onClick={onJSON} className="btn-hw primary text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Full Analysis · JSON</span><span className="mono text-[10px] mut normal-case tracking-normal">sections · symbols · memory · objects · isr · peripherals · build config · timeline</span></button><button onClick={onCSV} className="btn-hw text-left !py-4 !px-4 flex flex-col items-start gap-1"><span className="text-base">⎙ Symbol Table · CSV</span><span className="mono text-[10px] mut normal-case tracking-normal">name · section · address · size</span></button></div><div className="px-5 pb-5"><Locked name="CI / GitHub Action" note="a headless report is shipped in .github/workflows/analyze.yml + backend/cli.py — wire it to your build artifact to comment flash/RAM deltas on every PR." compact /></div></div>);
+function Reports({ onJSON, onCSV, selectedSymbol }: { onJSON: () => void; onCSV: () => void; selectedSymbol?: any }) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span>Reports</span>
+        <span className="tag">export analysis</span>
+      </div>
+
+      {selectedSymbol && (
+        <div className="p-4 m-5 mb-0 border border-[var(--a-dim)] rounded bg-[rgba(51,214,194,0.05)] flex items-center justify-between mono text-[12px]">
+          <div>
+            <span className="mut uppercase tracking-wider text-[10px] mr-2">Synchronized Selected Symbol:</span>
+            <strong className="acc">{selectedSymbol.name}</strong> ({selectedSymbol.secName} · {selectedSymbol.size} B)
+          </div>
+          <span className="tag">Active Workspace Context</span>
+        </div>
+      )}
+
+      <div className="p-5 grid sm:grid-cols-2 gap-4">
+        <button onClick={onJSON} className="btn-hw primary text-left !py-4 !px-4 flex flex-col items-start gap-1">
+          <span className="text-base">⎙ Full Analysis · JSON</span>
+          <span className="mono text-[10px] mut normal-case tracking-normal">sections · symbols · memory · objects · isr · peripherals · build config · timeline</span>
+        </button>
+        <button onClick={onCSV} className="btn-hw text-left !py-4 !px-4 flex flex-col items-start gap-1">
+          <span className="text-base">⎙ Symbol Table · CSV</span>
+          <span className="mono text-[10px] mut normal-case tracking-normal">name · section · address · size</span>
+        </button>
+      </div>
+    </div>
+  );
 }
-function Settings({ accent, setAccent, scanline, setScanline, device, override, setOverride }: { accent: string; setAccent: (a: any) => void; scanline: boolean; setScanline: (b: boolean) => void; device: any; override: string; setOverride: (s: string) => void }) {
-  const Toggle = ({ on, set, label }: any) => (<button onClick={() => set(!on)} className="flex items-center justify-between w-full p-3 border ln rounded-[3px] hover:border-[var(--a-dim)] transition"><span className="mono text-[12px] fg">{label}</span><span className="mono text-[10px] px-2 py-1 rounded-[2px]" style={{ background: on ? "rgba(51,214,194,.15)" : "rgba(255,255,255,.04)", color: on ? "var(--a)" : "var(--mut)" }}>{on ? "ON" : "OFF"}</span></button>);
-  return (<div className="panel"><div className="panel-head"><span>Settings</span><span className="tag">workbench</span></div><div className="p-5 grid sm:grid-cols-2 gap-3 max-w-2xl"><Toggle on={scanline} set={setScanline} label="CRT scanline" /><button onClick={() => setAccent(accent === "signal" ? "phosphor" : "signal")} className="flex items-center justify-between w-full p-3 border ln rounded-[3px] hover:border-[var(--a-dim)] transition"><span className="mono text-[12px] fg">Trace accent</span><span className="mono text-[10px] px-2 py-1 rounded-[2px] acc">{accent === "signal" ? "TEAL / AMBER" : "PHOSPHOR"}</span></button><label className="flex flex-col gap-2 p-3 border ln rounded-[3px] sm:col-span-2"><span className="mono text-[12px] fg">Target device override</span><select value={override} onChange={e => setOverride(e.target.value)} className="selbar" style={{ width: "100%" }}><option value="">auto-detect · {device?.name || "—"}</option>{DB_ORDER.map(id => <option key={id} value={id}>{DB[id].name}</option>)}<option value="generic">Cortex-M · generic</option></select><span className="mono text-[10px] mut">auto-detect reads arch + .text/.data base addresses; override for exact FLASH/RAM capacity.</span></label></div></div>);
+
+function Settings({ accent, setAccent, device, setOverride }: any) {
+  return (
+    <div className="panel p-6 space-y-6 mono text-xs">
+      <div className="text-sm font-bold text-white">Studio Settings</div>
+
+      <div className="p-4 rounded-lg bg-black/40 border border-[var(--line)] space-y-3">
+        <div className="font-bold text-[var(--a)]">Target MCU Device Override</div>
+        <div className="text-gray-300">Active Profile: <strong>{device?.name || "Auto-Detected"}</strong></div>
+        <button onClick={() => setOverride("")} className="px-3 py-1.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold border border-[var(--a-dim)] hover:bg-[var(--a)] hover:text-black transition">
+          Reset to Auto-Detect
+        </button>
+      </div>
+
+      <div className="p-4 rounded-lg bg-black/40 border border-[var(--line)] space-y-3">
+        <div className="font-bold text-white">Display & Theme</div>
+        <div className="flex gap-4">
+          <button onClick={() => setAccent("signal")} className={`px-4 py-2 rounded border font-bold ${accent === "signal" ? "bg-[var(--a)] text-black border-[var(--a)]" : "bg-black/40 text-gray-300 border-[var(--line)]"}`}>
+            Signal Theme
+          </button>
+          <button onClick={() => setAccent("phosphor")} className={`px-4 py-2 rounded border font-bold ${accent === "phosphor" ? "bg-amber-400 text-black border-amber-400" : "bg-black/40 text-gray-300 border-[var(--line)]"}`}>
+            Phosphor Theme
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

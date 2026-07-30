@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
-import type { Device } from "../utils/devices";
+import type { Device, Region } from "../utils/devices";
 import { inRegion, fmt } from "../utils/devices";
 
 type LdRegion = { name: string; attrs: string; origin: number; length: number };
-type NRegion = { name: string; origin: number; length: number; kind: string; color: string; attrs: string; base: number; size: number };
+type NRegion = { name: string; origin: number; length: number; kind: Region["kind"]; color: string; attrs: string; base: number; size: number };
 
 function parseSize(t: string): number { t = t.trim().replace(/;$/, ""); const m = t.match(/^([0-9]+(?:\.[0-9]+)?)([KkMm])?$/); if (m) { const n = parseFloat(m[1]); return m[2] ? n * (m[2].toLowerCase() === "k" ? 1024 : 1048576) : n; } if (/^0x[0-9a-f]+$/i.test(t)) return parseInt(t, 16); if (/^\d+$/.test(t)) return parseInt(t, 10); return 0; }
 function parseLD(text: string) {
@@ -18,7 +18,7 @@ function parseLD(text: string) {
 const ticks = (origin: number, length: number) => [0, 0.25, 0.5, 0.75, 1].map(f => ({ f, addr: origin + Math.round(length * f) }));
 const tickShift = (f: number) => (f <= 0 ? "0%" : f >= 1 ? "-100%" : "-50%");
 
-function Column({ rg, secs, placed, edit, onEdit, onPick }: any) {
+function Column({ rg, secs, placed, edit, onEdit, onPick, selected }: any) {
   const region = rg as NRegion;
   const isFlash = region.kind === "flash" || region.kind === "xip";
   const isRam = region.kind === "ram" || region.kind === "ccm";
@@ -28,7 +28,7 @@ function Column({ rg, secs, placed, edit, onEdit, onPick }: any) {
     .filter((b: any) => b.off >= 0 && b.off + b.size <= region.length)
     .sort((a: any, b: any) => a.off - b.off);
   // free gaps between/around real sections -> canonical annotations live ONLY here (never overlap a real section)
-  const blocks: any[] = occ.map(o => ({ ...o, ann: false }));
+  const blocks: any[] = occ.map((o: any) => ({ ...o, ann: false }));
   const gaps: { off: number; size: number }[] = [];
   let cursor = 0;
   for (const o of occ) { if (o.off > cursor) gaps.push({ off: cursor, size: o.off - cursor }); cursor = Math.max(cursor, o.off + o.size); }
@@ -42,14 +42,16 @@ function Column({ rg, secs, placed, edit, onEdit, onPick }: any) {
     else blocks.push({ ...g, name: "", color: "transparent", ann: false, free: true });
   }
   blocks.sort((a: any, b: any) => a.off - b.off);
+  const used = occ.reduce((sum: number, block: any) => sum + block.size, 0);
+  const pct = region.length ? Math.min(100, used / region.length * 100) : 0;
 
   return (
     <div className="ldcol">
       <div className="ldcol-head">
-        <span className="fg">{region.name}</span>
-        <span className="mut mono text-[10px]">0x{(region.origin >>> 0).toString(16)}</span>
+        <span className="fg">{region.name}<small>{isFlash ? "program memory" : isRam ? "working memory" : "memory region"}</small></span>
         <label className="ldedit" title="region length (KB)">{edit ? <><input type="number" min={1} value={Math.round(region.length / 1024)} onChange={e => onEdit(Math.max(1, parseInt(e.target.value) || 1) * 1024)} /> <span>KB</span></> : <span className="mut">{fmt(region.length)}</span>}</label>
       </div>
+      <div className="ldstats"><span>0x{(region.origin >>> 0).toString(16).padStart(8, "0")}</span><span>{fmt(used)} / {fmt(region.length)} · {pct.toFixed(1)}%</span></div><div className="ldutil"><i style={{ width: `${pct}%`, background: region.color }} /></div>
       <div className="ldaxis">
         <div className="ldruler">
           {ticks(region.origin, region.length).map((t, i) => (
@@ -57,7 +59,7 @@ function Column({ rg, secs, placed, edit, onEdit, onPick }: any) {
           ))}
           <div className="ldbar2">
             {blocks.map((b, i) => { const top = (b.off / region.length) * 100; const h = Math.max(0.5, (b.size / region.length) * 100); return (
-              <div key={i} className={`ldblk ${b.ann ? "ann" : ""} ${b.free ? "free" : ""}`} style={{ top: `${top}%`, height: `${h}%`, background: b.free ? undefined : b.color }} title={b.sec ? `${b.name} · 0x${(region.origin + b.off).toString(16)} · ${(b.size / 1024).toFixed(2)} KB` : (b.name || "free")} onClick={() => b.sec && onPick(b.sec)}>
+              <div key={i} className={`ldblk ${b.ann ? "ann" : ""} ${b.free ? "free" : ""} ${selected === b.sec?.name ? "sel" : ""}`} style={{ top: `${top}%`, height: `${h}%`, background: b.free ? undefined : b.color }} title={b.sec ? `${b.name} · 0x${(region.origin + b.off).toString(16)} · ${(b.size / 1024).toFixed(2)} KB` : (b.name || "free")} onClick={() => b.sec && onPick(b.sec)}>
                 {h > 3 && b.name && <span>{b.name}</span>}
               </div>); })}
           </div>
@@ -101,7 +103,7 @@ export default function LinkerScript({ result, device }: { result: ParseResult; 
       <div className="panel">
         <div className="panel-head"><span>{parsed ? "Declared Regions" : "Device Memory Map"}</span><span className="tag">vertical axis = address · click a section</span></div>
         <div className="p-4">
-          <div className="ldgrid">{regions.map(rg => <Column key={rg.name} rg={rg} secs={result.sections} placed={placement[rg.name] || []} edit={edit} onEdit={(v: number) => setOverrides(o => ({ ...o, [rg.name]: v }))} onPick={setPick} />)}</div>
+          <div className="ldgrid">{regions.map(rg => <Column key={rg.name} rg={rg} secs={result.sections} placed={placement[rg.name] || []} edit={edit} onEdit={(v: number) => setOverrides(o => ({ ...o, [rg.name]: v }))} onPick={setPick} selected={pick?.name} />)}</div>
           <div className="mut mono text-[9px] mt-3 leading-relaxed">sections sit at their real addresses; the canonical Cortex-M markers (vector table, heap, stack→<span className="acc">_estack</span>) only fill genuinely empty gaps, so they never cover real code. edit a region's KB to rescale live.</div>
         </div>
       </div>
