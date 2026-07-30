@@ -171,23 +171,32 @@ Disassembly decoding and register schema attribution support the following targe
 
 ---
 
-## Technical Architecture
+## 🏗️ Technical Architecture
 
-```text
-+-----------------------------------------------------------------------------------+
-|                           Frontend (React 18 + Vite + TS)                         |
-|  Sidebar Navigation  .  Header Ribbon  .  Global Search Modal  .  Error Boundary  |
-|  Overview  .  Memory Map  .  Code Investigator  .  Call Graph  .  Execution      |
-+-----------------------------------------+-----------------------------------------+
-                                          | REST API (HTTP JSON)
-+-----------------------------------------+-----------------------------------------+
-|                               Backend (FastAPI + Python)                          |
-|  - main.py           : REST Endpoints & Analysis Pipeline Controller              |
-|  - pyelftools        : ELF Section, Symbol, Relocation & DWARF Parser              |
-|  - Capstone Engine   : Multi-architecture Disassembly Decoder                      |
-|  - Disk Cache        : Persistent Binary Payload Store (/tmp/fis_elf_cache)       |
-|  - cli.py            : Headless CI/CD Datasheet & Diff Engine                     |
-+-----------------------------------------------------------------------------------+
+```mermaid
+flowchart LR
+
+    A["🖥️ React + Vite + TypeScript<br/>Frontend Workbench"]
+    B["⚡ FastAPI Backend"]
+    C["📦 Analysis Engine"]
+    D["📄 pyelftools"]
+    E["🔍 Capstone"]
+    F["🧠 Firmware Intelligence"]
+    G["📊 Interactive UI"]
+
+    A -->|REST API| B
+
+    B --> C
+
+    C --> D
+    C --> E
+
+    D --> F
+    E --> F
+
+    F --> G
+
+    G --> A
 ```
 
 ---
