@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
+import { getApiBaseUrl } from "../apiConfig";
 
 type Instr = { addr: number; bytes: string; mn: string; op: string; t: string[]; w: string[] };
 type Dis = {
@@ -117,7 +118,7 @@ export default function Disassembler({
     setLoadingDis(true);
     setDisError(null);
     const checksum = result?.checksum;
-    const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
+    const apiBase = getApiBaseUrl();
     const disUrl = checksum
       ? `${apiBase}/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(name)}`
       : `${apiBase}/api/disasm?name=${encodeURIComponent(name)}`;

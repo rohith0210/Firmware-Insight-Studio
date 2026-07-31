@@ -88,12 +88,15 @@ const TITLES: Record<View, string> = {
   dev_explorer: "Device Explorer",
 };
 
+import { getApiBaseUrl } from "./apiConfig";
+
 const TL_KEY = "fis_timeline_v1";
 
 async function parseFile(file: File): Promise<ParseResult> {
   const form = new FormData(); form.append("file", file);
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const res = await fetch(`${API_URL}/api/upload`, { method: "POST", body: form });
+  const apiBase = getApiBaseUrl();
+  const uploadUrl = apiBase ? `${apiBase}/api/upload` : "/api/upload";
+  const res = await fetch(uploadUrl, { method: "POST", body: form });
   if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
   const data = await res.json();
   return {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { ParseResult } from "../App";
+import { getApiBaseUrl } from "../apiConfig";
 
 type Props = {
   result: ParseResult;
@@ -34,7 +35,7 @@ export default function SourceViewer({ result, targetSymbol, onNavigateView }: P
     if (!symbolName) return;
     setLoading(true);
     const checksum = result.checksum;
-    const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
+    const apiBase = getApiBaseUrl();
     const url = checksum
       ? `${apiBase}/api/source?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(symbolName)}`
       : `${apiBase}/api/source?name=${encodeURIComponent(symbolName)}`;

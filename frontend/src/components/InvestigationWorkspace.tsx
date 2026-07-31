@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import type { ParseResult } from "../App";
+import { getApiBaseUrl } from "../apiConfig";
 
 type Props = {
   result: ParseResult;
@@ -104,7 +105,7 @@ export default function InvestigationWorkspace({
     }
   }, [activeSym?.name]);
 
-  const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
+  const apiBase = getApiBaseUrl();
 
   // Source Fetching
   const [sourceData, setSourceData] = useState<{
