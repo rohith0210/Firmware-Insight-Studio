@@ -501,42 +501,69 @@ export default function Disassembler({
           </button>
         </div>
 
-        {/* DEBUGGER CONTROLS (ONLY ACTIVE IN LIVE DEBUG MODE) */}
+        {/* DEBUGGER CONTROLS (DISABLED WHEN HARDWARE NOT CONNECTED) */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleRunToggle}
-            className={`mono text-xs px-3 py-1 rounded transition flex items-center gap-1 font-bold ${
-              status === "running"
-                ? "bg-amber-600 text-white hover:bg-amber-500 font-bold"
-                : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
-            }`}
-          >
-            <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
-          </button>
+          {(() => {
+            const isHardwareActive = isLiveDebug || wsConnected;
+            const disabledTitle = "Hardware not connected. Connect Local Debug Agent (ws://127.0.0.1:9001) or ST-Link to enable live CPU controls.";
+            return (
+              <>
+                <button
+                  onClick={handleRunToggle}
+                  disabled={!isHardwareActive}
+                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause execution" : "Run target"}
+                  className={`mono text-xs px-3 py-1 rounded transition flex items-center gap-1 font-bold ${
+                    !isHardwareActive
+                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                      : status === "running"
+                      ? "bg-amber-600 text-white hover:bg-amber-500 font-bold"
+                      : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
+                  }`}
+                >
+                  <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
+                </button>
 
-          <button
-            onClick={handleStepOver}
-            title="Step Over (stay in current function listing)"
-            className="mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
-          >
-            <span>↷ Step Over</span>
-          </button>
+                <button
+                  onClick={handleStepOver}
+                  disabled={!isHardwareActive}
+                  title={!isHardwareActive ? disabledTitle : "Step Over (stay in current function listing)"}
+                  className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+                    !isHardwareActive
+                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                      : "bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
+                  }`}
+                >
+                  <span>↷ Step Over</span>
+                </button>
 
-          <button
-            onClick={handleStepInto}
-            title="Step Into (follow function calls like HAL_Init)"
-            className="mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
-          >
-            <span>⤶ Step Into</span>
-          </button>
+                <button
+                  onClick={handleStepInto}
+                  disabled={!isHardwareActive}
+                  title={!isHardwareActive ? disabledTitle : "Step Into (follow function calls like HAL_Init)"}
+                  className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+                    !isHardwareActive
+                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                      : "bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
+                  }`}
+                >
+                  <span>⤶ Step Into</span>
+                </button>
 
-          <button
-            onClick={handleReset}
-            title="Reset Target PC to function entry point"
-            className="mono text-xs px-3 py-1 rounded border font-bold transition bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
-          >
-            ↺ Reset Target
-          </button>
+                <button
+                  onClick={handleReset}
+                  disabled={!isHardwareActive}
+                  title={!isHardwareActive ? disabledTitle : "Reset Target PC to function entry point"}
+                  className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
+                    !isHardwareActive
+                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                      : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
+                  }`}
+                >
+                  ↺ Reset Target
+                </button>
+              </>
+            );
+          })()}
         </div>
       </div>
 
