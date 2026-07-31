@@ -131,14 +131,38 @@ class GdbRspClient:
         return await self.get_registers()
 
     async def continue_run(self):
-        print("[>] Executing Continue ('c')...")
-        # Send GDB RSP continue command
+        print("[>] Executing Continue ('c')... Target running at full hardware speed.")
         if not self.connected or not self.writer:
             return {"status": "error"}
+        
+        # Flush any leftover bytes in reader buffer
+        try:
+            if hasattr(self.reader, '_buffer') and self.reader._buffer:
+                self.reader._buffer.clear()
+        except Exception:
+            pass
+
         pkt = "$c#63"
         self.writer.write(pkt.encode('latin-1'))
         await self.writer.drain()
         return {"status": "running"}
+
+    async def wait_for_stop(self):
+        """Asynchronously listen for GDB target stop event packet (T05 / S05)."""
+        if not self.connected or not self.reader:
+            return None
+        try:
+            raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=0.5)
+            _ = await asyncio.wait_for(self.reader.read(2), timeout=0.2)
+            self.writer.write(b'+')
+            await self.writer.drain()
+            print(f"[<] Target Stopped: '{raw.decode('latin-1', errors='ignore')}'")
+            return await self.get_registers()
+        except asyncio.TimeoutError:
+            return None
+        except Exception as e:
+            print(f"[-] Stop packet read error: {e}")
+            return None
 
     async def halt(self):
         print("[>] Executing Halt (Break Interrupt \\x03)...")

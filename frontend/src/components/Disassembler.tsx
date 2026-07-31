@@ -81,9 +81,26 @@ export default function Disassembler({
   const wsRef = useRef<WebSocket | null>(null);
   const disasmCacheRef = useRef<Map<string, Dis>>(new Map());
 
+  // Symbol resolution helper: maps an arbitrary memory address to its containing symbol name
+  const resolveSymbolForPc = (targetPc: number): string | null => {
+    const pcClean = targetPc & ~1;
+    if (!result || !Array.isArray(result.symbols)) return null;
+
+    const match = result.symbols.find(s => {
+      const val = (s.value || 0) & ~1;
+      const size = s.size || 0;
+      if (size > 0) {
+        return val <= pcClean && pcClean < val + size;
+      }
+      return val === pcClean;
+    });
+
+    return match ? match.name : null;
+  };
+
   const connectLocalAgent = () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      push("a", "🟢 [LOCAL AGENT ACTIVE] WebSocket session already active on ws://127.0.0.1:9001");
+      push("a", "🟢 [LOCAL AGENT ACTIVE] Session connected to ws://127.0.0.1:9001");
       return;
     }
 
@@ -96,7 +113,7 @@ export default function Disassembler({
         setIsLiveDebug(true);
         setShowAgentModal(false);
         wsRef.current = ws;
-        push("a", "🟢 [CONNECTED] Local Debug Agent active (ST-Link / OpenOCD:3333)");
+        push("a", "🟢 [CONNECTED] Live Debugger active (ST-Link / OpenOCD:3333)");
         ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
       };
 
@@ -137,7 +154,7 @@ export default function Disassembler({
     }
   };
 
-  // Auto-scroll disassembly view to active PC line & Auto-follow PC across function boundaries
+  // Auto-scroll disassembly view to active PC line & Auto-follow PC across symbol boundaries
   useEffect(() => {
     if (pc !== null) {
       if (activePcRef.current) {
@@ -146,20 +163,23 @@ export default function Disassembler({
           block: "nearest",
         });
       }
-      // Highlight PC in view or auto-switch function view ONLY if PC is out of range
+
+      // Check if current PC address is within the currently rendered disassembly view
       if (isLiveDebug && dis && dis.instructions && dis.instructions.length > 0) {
         const pcClean = pc & ~1;
         const inView = dis.instructions.some(i => (i.addr & ~1) === pcClean);
         if (!inView) {
-          const targetHex = `0x${pcClean.toString(16).padStart(8, "0")}`;
-          if (name !== targetHex) {
-            setName(targetHex);
-            push("b", `⚡ [LIVE CPU BRANCH] PC moved to 0x${targetHex.replace(/^0x/, "")}. Loading instruction view...`);
+          // Resolve symbol name for PC address to prevent raw hex bounce
+          const resolvedSym = resolveSymbolForPc(pcClean);
+          const targetName = resolvedSym || `0x${pcClean.toString(16).padStart(8, "0")}`;
+          if (name !== targetName) {
+            setName(targetName);
+            push("b", `⚡ [LIVE CPU BRANCH] PC moved to ${targetName} (0x${pcClean.toString(16)}).`);
           }
         }
       }
     }
-  }, [pc, isLiveDebug, dis, name]);
+  }, [pc, isLiveDebug, dis, name, result]);
 
   const push = (c: Log["c"], t: string) => {
     setLog(prev => [...prev, { c, t }]);
@@ -202,16 +222,19 @@ export default function Disassembler({
         if (data && !data.error && data.instructions && data.instructions.length > 0) {
           disasmCacheRef.current.set(name, data);
           setDis(data);
-          const entryAddr = data.func.addr;
-          setPc(entryAddr);
-          pcRef.current = entryAddr;
-          setRegs(prev => ({ ...prev, PC: entryAddr }));
-          push("a", `[OK] Disassembly loaded for '${name}' (${data.instructions.length} instructions at 0x${entryAddr.toString(16)}).`);
+          // ONLY set initial static PC if PC is null. Do NOT overwrite live hardware PC!
+          if (pc === null) {
+            const entryAddr = data.func.addr;
+            setPc(entryAddr);
+            pcRef.current = entryAddr;
+            setRegs(prev => ({ ...prev, PC: entryAddr }));
+          }
+          push("a", `[OK] Disassembly loaded for '${name}' (${data.instructions.length} instructions).`);
         } else {
           setDis(null);
           const errDetail = {
             reason: data?.reason || "DECODE_FAILED",
-            message: data?.message || `Disassembly unavailable for symbol '${name}'. Symbol size may be 0 bytes or section is non-executable.`
+            message: data?.message || `Disassembly unavailable for symbol '${name}'.`
           };
           setDisError(errDetail);
           push("e", `[UNAVAILABLE] ${errDetail.message}`);
