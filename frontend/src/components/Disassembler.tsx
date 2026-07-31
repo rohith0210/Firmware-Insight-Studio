@@ -217,10 +217,6 @@ export default function Disassembler({
 
   // STEP INTO
   const handleStepInto = () => {
-    if (!isLiveDebug) {
-      push("e", "[STATIC MODE] Step Into disabled in Static Analysis Mode. Connect a live debugger session.");
-      return;
-    }
     const currentDis = disRef.current;
     if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return;
 
@@ -230,13 +226,25 @@ export default function Disassembler({
     const currentInstr = idx >= 0 ? instrs[idx] : instrs[0];
 
     const mn = currentInstr.mn.toLowerCase();
-    if (mn.includes("bl") || mn.includes("call")) {
-      const matchCall = currentInstr.op.match(/<([^>]+)>/);
+    if (mn.startsWith("bl") || mn.startsWith("b") || mn.includes("call")) {
+      let rawTarget = currentInstr.op.trim();
+      if (rawTarget.startsWith("#")) rawTarget = rawTarget.slice(1).trim();
+      const matchCall = rawTarget.match(/<([^>]+)>/);
       if (matchCall && matchCall[1]) {
-        const calleeName = matchCall[1].split("+")[0].trim();
+        rawTarget = matchCall[1];
+      }
+      let calleeName = rawTarget.split("+")[0].trim();
+
+      // If hex address like 0x08000414
+      if (/^(0x)?[0-9a-fA-F]+$/.test(calleeName)) {
+        const addrClean = calleeName.replace(/^0x/i, "");
+        calleeName = `sub_${addrClean.padStart(8, "0")}`;
+      }
+
+      if (calleeName && calleeName !== name) {
         setName(calleeName);
         setSteps(s => s + 1);
-        push("b", `⤶ [STEP INTO] Branching into subroutine <${calleeName}> from 0x${currentInstr.addr.toString(16)}...`);
+        push("b", `⤶ [STEP INTO] Branching into subroutine '${calleeName}' from 0x${currentInstr.addr.toString(16).padStart(8, "0")}...`);
         return;
       }
     }
@@ -448,50 +456,35 @@ export default function Disassembler({
         <div className="flex items-center gap-2">
           <button
             onClick={handleRunToggle}
-            disabled={!isLiveDebug}
-            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Run continuous execution"}
-            className={`mono text-xs px-3 py-1 rounded font-bold flex items-center gap-1.5 transition ${!isLiveDebug
-                ? "bg-black/30 border border-white/10 text-gray-500 cursor-not-allowed opacity-60"
-                : status === "running"
-                  ? "bg-amber-500 text-black font-bold"
-                  : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
-              }`}
+            className={`mono text-xs px-3 py-1 rounded transition flex items-center gap-1 font-bold ${
+              status === "running"
+                ? "bg-amber-600 text-white hover:bg-amber-500 font-bold"
+                : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
+            }`}
           >
             <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
           </button>
 
           <button
             onClick={handleStepOver}
-            disabled={!isLiveDebug}
-            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Over (stay in current function listing)"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${!isLiveDebug
-                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
-                : "bg-[var(--panel)] border-[var(--line)] hover:border-[var(--a-dim)] text-[var(--fg)]"
-              }`}
+            title="Step Over (stay in current function listing)"
+            className="mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
           >
             <span>↷ Step Over</span>
           </button>
 
           <button
             onClick={handleStepInto}
-            disabled={!isLiveDebug}
-            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Into (follow function calls like HAL_Init)"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${!isLiveDebug
-                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
-                : "bg-[rgba(51,214,194,0.15)] border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a-dim)] hover:text-black shadow-sm"
-              }`}
+            title="Step Into (follow function calls like HAL_Init)"
+            className="mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
           >
             <span>⤶ Step Into</span>
           </button>
 
           <button
             onClick={handleReset}
-            disabled={!isLiveDebug}
-            title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Reset Target PC"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition ${!isLiveDebug
-                ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
-                : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/10"
-              }`}
+            title="Reset Target PC to function entry point"
+            className="mono text-xs px-3 py-1 rounded border font-bold transition bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
           >
             ↺ Reset Target
           </button>
