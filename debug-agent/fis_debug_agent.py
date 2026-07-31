@@ -39,39 +39,18 @@ class GdbRspClient:
         self.writer = None
         self.connected = False
 
-    async def _keepalive_loop(self):
-        while self.connected:
-            await asyncio.sleep(0.5)
-            if self.connected and self.writer:
-                try:
-                    await self.send_packet("?")
-                except Exception:
-                    pass
-
     async def connect(self):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self.connected = True
-            # Send GDB RSP initial handshake '+' and '$qSupported' sequence expected by OpenOCD
-            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+;QStartNoAckMode+#0c")
+            # Initial GDB RSP handshake expected by OpenOCD
+            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
             await self.writer.drain()
             try:
                 _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
-                self.writer.write(b"+")
-                await self.writer.drain()
-            except Exception:
-                pass
-            # Request NoAckMode from OpenOCD
-            self.writer.write(b"$QStartNoAckMode#b0")
-            await self.writer.drain()
-            try:
-                _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
-                self.writer.write(b"+")
-                await self.writer.drain()
             except Exception:
                 pass
             print(f"[+] Connected to GDB Server at {self.host}:{self.port}")
-            asyncio.create_task(self._keepalive_loop())
             return True
         except Exception as e:
             print(f"[-] Failed to connect to GDB Server ({self.host}:{self.port}): {e}")
@@ -91,9 +70,6 @@ class GdbRspClient:
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
             _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
             resp = raw.decode('latin-1').lstrip('$').lstrip('+').rstrip('#')
-            # Send ACK '+' back to OpenOCD
-            self.writer.write(b"+")
-            await self.writer.drain()
             return resp
         except Exception:
             return ""
