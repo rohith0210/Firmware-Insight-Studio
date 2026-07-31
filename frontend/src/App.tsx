@@ -167,8 +167,7 @@ export default function App() {
     try {
       const parsed = await parseFile(file);
       setResult(parsed);
-      const defaultSym = parsed.symbols.find((s: any) => s.name === "main") || parsed.symbols.find((s: any) => s.type === "STT_FUNC" || s.section === ".text") || parsed.symbols[0] || null;
-      setSelectedSymbol(defaultSym);
+      setSelectedSymbol(null);
       addToast("Firmware binary parsed successfully", "success");
     } catch (e: any) {
       setError(e.message);
