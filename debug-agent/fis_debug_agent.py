@@ -77,6 +77,10 @@ class GdbRspClient:
         try:
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
             _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
+            # Send '+' ACK back to OpenOCD to acknowledge packet reception
+            self.writer.write(b"+")
+            await self.writer.drain()
+
             text = raw.decode('latin-1')
             # Extract content between $ and #
             if '$' in text:
@@ -117,20 +121,45 @@ class GdbRspClient:
         print("[>] Executing Single Step ('s')...")
         resp = await self.send_packet("s")
         print(f"[<] Step Response: '{resp}'")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.02)
+        return await self.get_registers()
+
+    async def step_over(self):
+        print("[>] Executing Step Over ('n')...")
+        resp = await self.send_packet("s")
+        await asyncio.sleep(0.02)
         return await self.get_registers()
 
     async def continue_run(self):
         print("[>] Executing Continue ('c')...")
-        await self.send_packet("c")
+        # Send GDB RSP continue command
+        if not self.connected or not self.writer:
+            return {"status": "error"}
+        pkt = "$c#63"
+        self.writer.write(pkt.encode('latin-1'))
+        await self.writer.drain()
         return {"status": "running"}
 
     async def halt(self):
-        print("[>] Executing Halt (Break)...")
+        print("[>] Executing Halt (Break Interrupt \\x03)...")
         if self.writer:
             self.writer.write(b'\x03')
             await self.writer.drain()
+            try:
+                _ = await asyncio.wait_for(self.reader.read(64), timeout=0.5)
+                self.writer.write(b'+')
+                await self.writer.drain()
+            except Exception:
+                pass
         await asyncio.sleep(0.05)
+        return await self.get_registers()
+
+    async def reset_target(self):
+        print("[>] Executing Target Reset (monitor reset halt)...")
+        # Send monitor reset halt command via RSP qRcmd
+        cmd_hex = "monitor reset halt".encode('utf-8').hex()
+        await self.send_packet(f"qRcmd,{cmd_hex}")
+        await asyncio.sleep(0.1)
         return await self.get_registers()
 
     def disconnect(self):
@@ -168,8 +197,12 @@ async def ws_handler(websocket):
                         regs = await gdb_client.get_registers()
                         await websocket.send(json.dumps({"type": "REGISTERS", "data": regs}))
 
-                elif cmd_type == "STEP_INTO" or cmd_type == "STEP_OVER":
+                elif cmd_type == "STEP_INTO":
                     regs = await gdb_client.step_into()
+                    await websocket.send(json.dumps({"type": "STEP_COMPLETE", "data": regs}))
+
+                elif cmd_type == "STEP_OVER":
+                    regs = await gdb_client.step_over()
                     await websocket.send(json.dumps({"type": "STEP_COMPLETE", "data": regs}))
 
                 elif cmd_type == "RUN":
@@ -179,6 +212,10 @@ async def ws_handler(websocket):
                 elif cmd_type == "HALT":
                     regs = await gdb_client.halt()
                     await websocket.send(json.dumps({"type": "HALTED", "data": regs}))
+
+                elif cmd_type == "RESET":
+                    regs = await gdb_client.reset_target()
+                    await websocket.send(json.dumps({"type": "RESET_COMPLETE", "data": regs}))
 
                 else:
                     await websocket.send(json.dumps({"type": "UNKNOWN_CMD", "cmd": cmd_type}))

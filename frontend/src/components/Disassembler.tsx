@@ -69,50 +69,62 @@ export default function Disassembler({
     xPSR: 0x61000000, PRIMASK: 0x00000000,
   });
   const [status, setStatus] = useState<Status>("idle");
-  const [steps, setSteps] = useState(0);
-  const [now, setNow] = useState<Set<string>>(new Set());
+  const [steps] = useState(0);
+  const [now] = useState<Set<string>>(new Set());
 
   const pcRef = useRef<number | null>(pc);
-  const bpsRef = useRef<Set<number>>(bps);
-  const disRef = useRef<Dis | null>(dis);
   const logRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<number | null>(null);
   const activePcRef = useRef<HTMLDivElement | null>(null);
 
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [showAgentModal, setShowAgentModal] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const disasmCacheRef = useRef<Map<string, Dis>>(new Map());
 
   const connectLocalAgent = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      push("a", "🟢 [LOCAL AGENT ACTIVE] WebSocket session already active on ws://127.0.0.1:9001");
+      return;
+    }
+
     try {
-      push("m", "🔌 [LOCAL AGENT] Attempting handshake with Local Debug Agent at ws://127.0.0.1:9001...");
+      push("m", "🔌 [LOCAL AGENT] Connecting to Local Debug Agent on ws://127.0.0.1:9001...");
       const ws = new WebSocket("ws://127.0.0.1:9001");
+
       ws.onopen = () => {
         setWsConnected(true);
         setIsLiveDebug(true);
         setShowAgentModal(false);
         wsRef.current = ws;
-        push("a", "🟢 [LOCAL AGENT CONNECTED] Hardware Debugger Agent active on ws://127.0.0.1:9001 (ST-Link / OpenOCD:3333)");
+        push("a", "🟢 [CONNECTED] Local Debug Agent active (ST-Link / OpenOCD:3333)");
         ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
       };
+
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if ((msg.type === "REGISTERS" || msg.type === "STEP_COMPLETE") && msg.data) {
+          if ((msg.type === "REGISTERS" || msg.type === "STEP_COMPLETE" || msg.type === "HALTED" || msg.type === "RESET_COMPLETE") && msg.data) {
             setRegs(prev => ({ ...prev, ...msg.data }));
-            if (msg.data.PC) {
+            if (msg.data.PC !== undefined) {
               setPc(msg.data.PC);
               pcRef.current = msg.data.PC;
             }
+            if (msg.type === "HALTED" || msg.type === "RESET_COMPLETE" || msg.type === "STEP_COMPLETE") {
+              setStatus("halted");
+            }
+          } else if (msg.type === "RUN_STARTED") {
+            setStatus("running");
           }
         } catch (e) {}
       };
+
       ws.onerror = () => {
         setWsConnected(false);
         setIsLiveDebug(false);
         setShowAgentModal(true);
-        push("e", "🔴 [HARDWARE NOT CONNECTED] Could not reach Local Debug Agent at ws://127.0.0.1:9001. Hardware probe required.");
+        push("e", "🔴 [DISCONNECTED] Could not reach Local Debug Agent on ws://127.0.0.1:9001.");
       };
+
       ws.onclose = () => {
         setWsConnected(false);
         setIsLiveDebug(false);
@@ -134,18 +146,20 @@ export default function Disassembler({
           block: "nearest",
         });
       }
-      // Auto-follow live hardware PC across function boundaries
+      // Highlight PC in view or auto-switch function view ONLY if PC is out of range
       if (isLiveDebug && dis && dis.instructions && dis.instructions.length > 0) {
         const pcClean = pc & ~1;
         const inView = dis.instructions.some(i => (i.addr & ~1) === pcClean);
         if (!inView) {
           const targetHex = `0x${pcClean.toString(16).padStart(8, "0")}`;
-          setName(targetHex);
-          push("b", `⚡ [LIVE CPU BRANCH] Auto-following PC to target address ${targetHex}...`);
+          if (name !== targetHex) {
+            setName(targetHex);
+            push("b", `⚡ [LIVE CPU BRANCH] PC moved to 0x${targetHex.replace(/^0x/, "")}. Loading instruction view...`);
+          }
         }
       }
     }
-  }, [pc, isLiveDebug, dis]);
+  }, [pc, isLiveDebug, dis, name]);
 
   const push = (c: Log["c"], t: string) => {
     setLog(prev => [...prev, { c, t }]);
@@ -160,9 +174,19 @@ export default function Disassembler({
     }
   }, [target?.nonce, target?.name]);
 
-  // Fetch Disassembly from Backend API (/api/disasm)
+  // Fetch Disassembly with Client-Side Caching (Disassemble ONCE per symbol)
   const fetchDisasm = () => {
     if (!name) return;
+
+    // Check client-side cache first to avoid re-decoding the same function repeatedly
+    if (disasmCacheRef.current.has(name)) {
+      const cached = disasmCacheRef.current.get(name)!;
+      setDis(cached);
+      setLoadingDis(false);
+      setDisError(null);
+      return;
+    }
+
     setLoadingDis(true);
     setDisError(null);
     const checksum = result?.checksum;
@@ -176,12 +200,13 @@ export default function Disassembler({
       .then(data => {
         setLoadingDis(false);
         if (data && !data.error && data.instructions && data.instructions.length > 0) {
+          disasmCacheRef.current.set(name, data);
           setDis(data);
           const entryAddr = data.func.addr;
           setPc(entryAddr);
           pcRef.current = entryAddr;
           setRegs(prev => ({ ...prev, PC: entryAddr }));
-          push("a", `[OK] Disassembly decoded ${data.instructions.length} instructions for '${name}' at 0x${entryAddr.toString(16)}.`);
+          push("a", `[OK] Disassembly loaded for '${name}' (${data.instructions.length} instructions at 0x${entryAddr.toString(16)}).`);
         } else {
           setDis(null);
           const errDetail = {
@@ -216,132 +241,66 @@ export default function Disassembler({
     }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
-      push("o", "⚡ [HARDWARE STEP] Issued Single Step (RSP 's') to OpenOCD/GDB server.");
+      wsRef.current.send(JSON.stringify({ type: "STEP_OVER" }));
+      push("o", "⤼ [STEP OVER] Sent single step over ('n') to OpenOCD / GDB server.");
       return true;
     }
-
-    const currentDis = disRef.current;
-    if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return false;
-
-    const instrs = currentDis.instructions;
-    const currPc = pcRef.current ?? currentDis.func.addr;
-    const idx = instrs.findIndex(i => i.addr === currPc);
-    const currentInstr = idx >= 0 ? instrs[idx] : instrs[0];
-
-    const nextIdx = idx >= 0 ? (idx + 1) % instrs.length : 0;
-    const nextAddr = instrs[nextIdx].addr;
-
-    if (bpsRef.current.has(nextAddr)) {
-      setPc(nextAddr);
-      pcRef.current = nextAddr;
-      setRegs(prev => ({ ...prev, PC: nextAddr }));
-      push("b", `🛑 BREAKPOINT HIT at 0x${nextAddr.toString(16)}! Execution halted.`);
-      return false;
-    }
-
-    setPc(nextAddr);
-    pcRef.current = nextAddr;
-    setSteps(s => s + 1);
-
-    const mn = currentInstr.mn.toLowerCase();
-    setRegs(prev => {
-      const updated: Record<string, number> = { ...prev, PC: nextAddr };
-      if (mn.includes("mov")) {
-        if (currentInstr.op.includes("r3, r1")) updated.R3 = (updated.R1 ?? 0x55) & 0xff;
-        else if (currentInstr.op.includes("r0, r3")) updated.R0 = updated.R3 ?? 0x20000100;
-      } else if (mn.includes("adds")) {
-        if (currentInstr.op.includes("r0")) updated.R0 = ((updated.R0 ?? 0x20000100) + 1) & 0xffffffff;
-        if (currentInstr.op.includes("r1")) updated.R1 = ((updated.R1 ?? 0x20000100) + 1) & 0xffffffff;
-      } else if (mn.includes("subs")) {
-        if (currentInstr.op.includes("r2")) updated.R2 = Math.max(0, (updated.R2 ?? 16) - 1) & 0xffffffff;
-      } else if (mn.includes("push")) {
-        updated.SP = ((updated.SP ?? 0x20004000) - 12) & 0xffffffff;
-      } else if (mn.includes("pop")) {
-        updated.SP = ((updated.SP ?? 0x20004000) + 12) & 0xffffffff;
-      } else if (mn.includes("bl")) {
-        updated.LR = (currentInstr.addr + 4) & 0xffffffff;
-      }
-      return updated;
-    });
-
-    setNow(new Set(currentInstr.w || []));
-    push("o", `↷ [STEP OVER 0x${currentInstr.addr.toString(16)}] ${currentInstr.mn} ${currentInstr.op}`);
-    return true;
+    return false;
   };
 
   // STEP INTO
   const handleStepInto = () => {
-    const currentDis = disRef.current;
-    if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return;
-
-    const instrs = currentDis.instructions;
-    const currPc = pcRef.current ?? currentDis.func.addr;
-    const idx = instrs.findIndex(i => i.addr === currPc);
-    const currentInstr = idx >= 0 ? instrs[idx] : instrs[0];
-
-    const mn = currentInstr.mn.toLowerCase();
-    if (mn.startsWith("bl") || mn.startsWith("b") || mn.includes("call")) {
-      let rawTarget = currentInstr.op.trim();
-      if (rawTarget.startsWith("#")) rawTarget = rawTarget.slice(1).trim();
-      const matchCall = rawTarget.match(/<([^>]+)>/);
-      if (matchCall && matchCall[1]) {
-        rawTarget = matchCall[1];
-      }
-      let calleeName = rawTarget.split("+")[0].trim();
-
-      // If hex address like 0x08000414
-      if (/^(0x)?[0-9a-fA-F]+$/.test(calleeName)) {
-        const addrClean = calleeName.replace(/^0x/i, "");
-        calleeName = `sub_${addrClean.padStart(8, "0")}`;
-      }
-
-      if (calleeName && calleeName !== name) {
-        setName(calleeName);
-        setSteps(s => s + 1);
-        push("b", `⤶ [STEP INTO] Branching into subroutine '${calleeName}' from 0x${currentInstr.addr.toString(16).padStart(8, "0")}...`);
-        return;
-      }
+    if (!isLiveDebug) {
+      push("e", "[STATIC MODE] Step Into disabled in Static Analysis Mode. Connect a live debugger session.");
+      return;
     }
-    handleStepOver();
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
+      push("o", "⤵ [STEP INTO] Sent single step into ('s') to OpenOCD / GDB server.");
+      return;
+    }
   };
 
+  // RUN / CONTINUE (Send GDB RSP 'c' ONCE, or HALT with Interrupt \x03 ONCE)
   const handleRunToggle = () => {
     if (!isLiveDebug) {
       push("e", "[STATIC MODE] Continuous run disabled in Static Analysis Mode. Connect a live debugger session.");
       return;
     }
-    if (status === "running") {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setStatus("halted");
-      push("b", "Execution paused by user.");
-    } else {
-      setStatus("running");
-      push("b", "Continuous execution started...");
 
-      timerRef.current = window.setInterval(() => {
-        const canContinue = handleStepOver();
-        if (!canContinue) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          setStatus("halted");
-        }
-      }, 350);
+    if (status === "running") {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "HALT" }));
+      }
+      setStatus("halted");
+      push("b", "⏸ [HALT] Sent interrupt signal (\\x03) to pause execution.");
+    } else {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "RUN" }));
+      }
+      setStatus("running");
+      push("a", "▶ [CONTINUE] Target running at full hardware clock speed ('c').");
     }
   };
 
+  // RESET TARGET (Send monitor reset halt ONCE)
   const handleReset = () => {
     if (!isLiveDebug) {
       push("m", "[STATIC MODE] Resetting target selection view.");
+      if (dis) {
+        setPc(dis.func.addr);
+        pcRef.current = dis.func.addr;
+        setRegs(prev => ({ ...prev, PC: dis.func.addr }));
+      }
       return;
     }
-    if (timerRef.current) clearInterval(timerRef.current);
-    setStatus("idle");
-    if (dis) {
-      setPc(dis.func.addr);
-      pcRef.current = dis.func.addr;
-      setRegs(prev => ({ ...prev, PC: dis.func.addr }));
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "RESET" }));
+      setStatus("halted");
+      push("a", "↺ [RESET] Reset target and halted (monitor reset halt).");
     }
-    push("a", "Target reset to function entry point.");
   };
 
   const toggleBp = (addr: number) => {
