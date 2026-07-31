@@ -194,11 +194,11 @@ export default function Disassembler({
     }
   }, [target?.nonce, target?.name]);
 
-  // Fetch Disassembly with Client-Side Caching (Disassemble ONCE per symbol)
+  // Fetch Disassembly with Client-Side Caching (Disassemble ONCE per symbol, silent cache hits)
   const fetchDisasm = () => {
     if (!name) return;
 
-    // Check client-side cache first to avoid re-decoding the same function repeatedly
+    // Check client-side cache first - SILENT load without redundant console logs
     if (disasmCacheRef.current.has(name)) {
       const cached = disasmCacheRef.current.get(name)!;
       setDis(cached);
@@ -229,7 +229,7 @@ export default function Disassembler({
             pcRef.current = entryAddr;
             setRegs(prev => ({ ...prev, PC: entryAddr }));
           }
-          push("a", `[OK] Disassembly loaded for '${name}' (${data.instructions.length} instructions).`);
+          push("a", `Loaded '${name}' (${data.instructions.length} instrs)`);
         } else {
           setDis(null);
           const errDetail = {
@@ -237,7 +237,7 @@ export default function Disassembler({
             message: data?.message || `Disassembly unavailable for symbol '${name}'.`
           };
           setDisError(errDetail);
-          push("e", `[UNAVAILABLE] ${errDetail.message}`);
+          push("e", `Disassembly unavailable for '${name}'`);
         }
       })
       .catch(err => {
@@ -248,7 +248,7 @@ export default function Disassembler({
           message: `Failed to connect to backend disassembly service: ${err.message}`
         };
         setDisError(errDetail);
-        push("e", `[ERROR] ${errDetail.message}`);
+        push("e", `Failed to load disassembly: ${err.message}`);
       });
   };
 
@@ -256,61 +256,51 @@ export default function Disassembler({
     fetchDisasm();
   }, [name, result?.checksum]);
 
-  // STEP OVER
+  // STEP OVER (Single 'n' command)
   const handleStepOver = (): boolean => {
-    if (!isLiveDebug) {
-      push("e", "[STATIC MODE] Step Over disabled in Static Analysis Mode. Connect a live debugger session.");
-      return false;
-    }
+    if (!isLiveDebug) return false;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "STEP_OVER" }));
-      push("o", "⤼ [STEP OVER] Sent single step over ('n') to OpenOCD / GDB server.");
+      push("o", "⤼ Step Over ('n')");
       return true;
     }
     return false;
   };
 
-  // STEP INTO
+  // STEP INTO (Single 's' command)
   const handleStepInto = () => {
-    if (!isLiveDebug) {
-      push("e", "[STATIC MODE] Step Into disabled in Static Analysis Mode. Connect a live debugger session.");
-      return;
-    }
+    if (!isLiveDebug) return;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
-      push("o", "⤵ [STEP INTO] Sent single step into ('s') to OpenOCD / GDB server.");
+      push("o", "⤵ Step Into ('s')");
       return;
     }
   };
 
   // RUN / CONTINUE (Send GDB RSP 'c' ONCE, or HALT with Interrupt \x03 ONCE)
   const handleRunToggle = () => {
-    if (!isLiveDebug) {
-      push("e", "[STATIC MODE] Continuous run disabled in Static Analysis Mode. Connect a live debugger session.");
-      return;
-    }
+    if (!isLiveDebug) return;
 
     if (status === "running") {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: "HALT" }));
       }
       setStatus("halted");
-      push("b", "⏸ [HALT] Sent interrupt signal (\\x03) to pause execution.");
+      push("b", "⏸ Halted by user (\\x03)");
     } else {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: "RUN" }));
       }
       setStatus("running");
-      push("a", "▶ [CONTINUE] Target running at full hardware clock speed ('c').");
+      push("a", "▶ Continue ('c')");
     }
   };
 
   // RESET TARGET (Send monitor reset halt ONCE)
   const handleReset = () => {
     if (!isLiveDebug) {
-      push("m", "[STATIC MODE] Resetting target selection view.");
       if (dis) {
         setPc(dis.func.addr);
         pcRef.current = dis.func.addr;
@@ -322,7 +312,7 @@ export default function Disassembler({
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "RESET" }));
       setStatus("halted");
-      push("a", "↺ [RESET] Reset target and halted (monitor reset halt).");
+      push("a", "↺ Target Reset (monitor reset halt)");
     }
   };
 
@@ -331,10 +321,10 @@ export default function Disassembler({
       const next = new Set(prev);
       if (next.has(addr)) {
         next.delete(addr);
-        push("m", `Breakpoint removed at 0x${addr.toString(16)}.`);
+        push("m", `🛑 Breakpoint removed at 0x${addr.toString(16)}`);
       } else {
         next.add(addr);
-        push("b", `Breakpoint set at 0x${addr.toString(16)}.`);
+        push("b", `🛑 Breakpoint set at 0x${addr.toString(16)}`);
       }
       return next;
     });
@@ -363,7 +353,7 @@ export default function Disassembler({
         if (!isNaN(addr)) toggleBp(addr);
         else push("e", `Invalid breakpoint hex address '${arg}'`);
       } else {
-        push("e", "Usage: break <hex_address> (e.g. break 0x8000184)");
+        push("e", "Usage: break <hex_address>");
       }
     } else if (cmdName === "regs" || cmdName === "info") {
       if (isLiveDebug) {
@@ -378,16 +368,15 @@ export default function Disassembler({
       push("b", "════════════════════════════════════════════════════");
       push("b", "  Cortex-M Execution REPL Debugger Help Reference   ");
       push("b", "════════════════════════════════════════════════════");
-      push("o", "  step / s / si    - Step INTO function call (e.g. HAL_Init)");
-      push("o", "  next / n / so    - Step OVER instruction within current function");
+      push("o", "  step / s / si    - Step INTO function call");
+      push("o", "  next / n / so    - Step OVER instruction");
       push("o", "  run / r          - Resume continuous execution");
-      push("o", "  reset            - Reset PC to function entry point");
+      push("o", "  reset            - Reset target MCU");
       push("o", "  break / b <addr> - Set breakpoint at address");
       push("o", "  regs             - Display current CPU core registers");
-      push("o", "  help             - Show this help menu");
       push("b", "════════════════════════════════════════════════════");
     } else {
-      push("m", `Execution command '${trimmed}' executed.`);
+      push("m", `Command '${trimmed}' executed.`);
     }
   };
 
@@ -395,29 +384,71 @@ export default function Disassembler({
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
-      {/* MODE BANNER: STATIC ANALYSIS MODE vs LIVE DEBUG SESSION */}
-      {!isLiveDebug ? (
-        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2 text-amber-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold text-[10px] uppercase tracking-wider">
-              Static Analysis Mode
+      {/* 4-STATE STATUS BAR: STATIC ANALYSIS | LOCAL AGENT CONNECTED | LIVE RUNNING | LIVE HALTED */}
+      {!wsConnected || !isLiveDebug ? (
+        <div className="bg-slate-900/80 border-b border-slate-700/50 px-4 py-2 text-slate-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-slate-500" />
+              Static Analysis
             </span>
-            <span>Inspecting binary payload structure. Runtime state (register values, PC stepping, stack frames) requires an active debugger session.</span>
+            <span className="text-gray-400">Inspecting binary metadata. Connect Local Agent for live CPU stepping & hardware register state.</span>
           </div>
           <button
             onClick={connectLocalAgent}
-            className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
+            className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
           >
-            <span>🔌</span> Connect Live Debugger
+            <span>🔌</span> Connect Local Debug Agent
           </button>
         </div>
-      ) : (
-        <div className="bg-emerald-500/10 border-b border-emerald-500/30 px-4 py-2 text-emerald-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-[10px] uppercase tracking-wider">
-              Live Debug Session Active
+      ) : status === "running" ? (
+        <div className="bg-emerald-950/60 border-b border-emerald-500/30 px-4 py-2 text-emerald-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              Live Running
             </span>
-            <span>Connected to OpenOCD / GDB Target (ST-Link v2 @ 3333). Live CPU stepping and register inspection enabled.</span>
+            <span>Target executing at full hardware clock speed ('c'). Click Pause (Interrupt \x03) to halt.</span>
+          </div>
+          <button
+            onClick={handleRunToggle}
+            className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <span>⏸</span> Pause Target
+          </button>
+        </div>
+      ) : status === "halted" ? (
+        <div className="bg-amber-950/60 border-b border-amber-500/30 px-4 py-2 text-amber-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              Live Halted
+            </span>
+            <span>CPU Halted at PC 0x{(pc || 0).toString(16).padStart(8, "0")}. Disassembly & registers synced.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleStepOver}
+              className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[11px] transition border border-white/10"
+            >
+              ⤼ Step Over
+            </button>
+            <button
+              onClick={handleRunToggle}
+              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5"
+            >
+              <span>▶</span> Continue
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-blue-950/60 border-b border-blue-500/30 px-4 py-2 text-blue-300 mono text-xs flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2.5 py-0.5 rounded bg-blue-500/20 border border-blue-500/40 text-blue-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-blue-400" />
+              Local Agent Connected
+            </span>
+            <span>Connected to Local Debug Agent (ws://127.0.0.1:9001 ➔ OpenOCD:3333 ➔ ST-Link). Ready for commands.</span>
           </div>
           <button
             onClick={() => {
