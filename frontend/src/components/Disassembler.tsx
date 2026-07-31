@@ -548,10 +548,10 @@ export default function Disassembler({
 
                 <button
                   onClick={handleStepOver}
-                  disabled={!isHardwareActive}
-                  title={!isHardwareActive ? disabledTitle : "Step Over (stay in current function listing)"}
+                  disabled={!isHardwareActive || status === "running"}
+                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to step over" : "Step Over (stay in current function listing)"}
                   className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-                    !isHardwareActive
+                    !isHardwareActive || status === "running"
                       ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
                       : "bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
                   }`}
@@ -561,10 +561,10 @@ export default function Disassembler({
 
                 <button
                   onClick={handleStepInto}
-                  disabled={!isHardwareActive}
-                  title={!isHardwareActive ? disabledTitle : "Step Into (follow function calls like HAL_Init)"}
+                  disabled={!isHardwareActive || status === "running"}
+                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to step into" : "Step Into (follow function calls like HAL_Init)"}
                   className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-                    !isHardwareActive
+                    !isHardwareActive || status === "running"
                       ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
                       : "bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
                   }`}
@@ -574,10 +574,10 @@ export default function Disassembler({
 
                 <button
                   onClick={handleReset}
-                  disabled={!isHardwareActive}
-                  title={!isHardwareActive ? disabledTitle : "Reset Target PC to function entry point"}
+                  disabled={!isHardwareActive || status === "running"}
+                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to reset" : "Reset Target PC to function entry point"}
                   className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
-                    !isHardwareActive
+                    !isHardwareActive || status === "running"
                       ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
                       : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
                   }`}

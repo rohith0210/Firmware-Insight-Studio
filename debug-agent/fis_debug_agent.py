@@ -38,11 +38,13 @@ class GdbRspClient:
         self.reader = None
         self.writer = None
         self.connected = False
+        self.is_running = False
 
     async def connect(self):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self.connected = True
+            self.is_running = False
             # Initial GDB RSP handshake expected by OpenOCD
             self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
             await self.writer.drain()
@@ -82,7 +84,6 @@ class GdbRspClient:
             await self.writer.drain()
 
             text = raw.decode('latin-1')
-            # Extract content between $ and #
             if '$' in text:
                 text = text.split('$', 1)[1]
             if '#' in text:
@@ -93,16 +94,16 @@ class GdbRspClient:
             return ""
 
     async def get_registers(self):
-        # RSP packet 'g' reads all general registers
+        if self.is_running:
+            await self.halt()
+
         resp = await self.send_packet("g")
         if not resp or resp.startswith("E") or len(resp) < 136:
-            print(f"[!] Raw register packet invalid/short: '{resp[:30]}...'")
             return {
                 "R0": 0x20000100, "R1": 0x00000000, "R2": 0x40021000, "R3": 0x00000001,
                 "R4": 0x00000000, "R5": 0x00000000, "R6": 0x00000000, "R7": 0x20004000,
                 "SP": 0x20004000, "LR": 0x080001b1, "PC": 0x08000180, "xPSR": 0x61000000
             }
-        # Parse hex register string (32-bit little endian registers)
         regs = {}
         r_names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "SP", "LR", "PC", "xPSR"]
         try:
@@ -112,30 +113,33 @@ class GdbRspClient:
                     b = bytes.fromhex(sub)
                     val = int.from_bytes(b, byteorder='little')
                     regs[rname] = val
-            print(f"[+] Registers Read -> PC: 0x{regs.get('PC', 0):08x} | SP: 0x{regs.get('SP', 0):08x} | R0: 0x{regs.get('R0', 0):08x}")
         except Exception as e:
             print(f"[-] Register parsing error: {e}")
         return regs if regs else {"PC": 0x08000180, "SP": 0x20004000}
 
     async def step_into(self):
-        print("[>] Executing Single Step ('s')...")
+        if self.is_running:
+            await self.halt()
+        print("[>] Single Step ('s')")
         resp = await self.send_packet("s")
-        print(f"[<] Step Response: '{resp}'")
-        await asyncio.sleep(0.02)
+        self.is_running = False
+        await asyncio.sleep(0.01)
         return await self.get_registers()
 
     async def step_over(self):
-        print("[>] Executing Step Over ('n')...")
+        if self.is_running:
+            await self.halt()
+        print("[>] Step Over ('n')")
         resp = await self.send_packet("s")
-        await asyncio.sleep(0.02)
+        self.is_running = False
+        await asyncio.sleep(0.01)
         return await self.get_registers()
 
     async def continue_run(self):
-        print("[>] Executing Continue ('c')... Target running at full hardware speed.")
+        print("[>] Continue ('c'). Target running...")
         if not self.connected or not self.writer:
             return {"status": "error"}
         
-        # Flush any leftover bytes in reader buffer
         try:
             if hasattr(self.reader, '_buffer') and self.reader._buffer:
                 self.reader._buffer.clear()
@@ -145,37 +149,38 @@ class GdbRspClient:
         pkt = "$c#63"
         self.writer.write(pkt.encode('latin-1'))
         await self.writer.drain()
+        self.is_running = True
         return {"status": "running"}
 
     async def wait_for_stop(self):
         """Asynchronously listen for GDB target stop event packet (T05 / S05)."""
-        if not self.connected or not self.reader:
+        if not self.connected or not self.reader or not self.is_running:
             return None
         try:
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=0.5)
             _ = await asyncio.wait_for(self.reader.read(2), timeout=0.2)
             self.writer.write(b'+')
             await self.writer.drain()
-            print(f"[<] Target Stopped: '{raw.decode('latin-1', errors='ignore')}'")
+            self.is_running = False
             return await self.get_registers()
         except asyncio.TimeoutError:
             return None
-        except Exception as e:
-            print(f"[-] Stop packet read error: {e}")
+        except Exception:
             return None
 
     async def halt(self):
-        print("[>] Executing Halt (Break Interrupt \\x03)...")
         if self.writer:
             self.writer.write(b'\x03')
             await self.writer.drain()
             try:
-                _ = await asyncio.wait_for(self.reader.read(64), timeout=0.5)
+                _ = await asyncio.wait_for(self.reader.read(64), timeout=0.3)
                 self.writer.write(b'+')
                 await self.writer.drain()
             except Exception:
                 pass
-        await asyncio.sleep(0.05)
+        self.is_running = False
+        print("[>] Halted (Interrupt \\x03)")
+        await asyncio.sleep(0.02)
         return await self.get_registers()
 
     async def reset_target(self):
