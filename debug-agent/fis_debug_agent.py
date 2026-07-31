@@ -60,6 +60,14 @@ class GdbRspClient:
     async def send_packet(self, data: str) -> str:
         if not self.connected or not self.writer:
             return ""
+        
+        # Flush any leftover bytes in reader buffer
+        try:
+            if hasattr(self.reader, '_buffer') and self.reader._buffer:
+                self.reader._buffer.clear()
+        except Exception:
+            pass
+
         # GDB RSP format: $<data>#<checksum>
         chk = sum(data.encode('latin-1')) % 256
         pkt = f"${data}#{chk:02x}"
@@ -69,15 +77,22 @@ class GdbRspClient:
         try:
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
             _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
-            resp = raw.decode('latin-1').lstrip('$').lstrip('+').rstrip('#')
-            return resp
-        except Exception:
+            text = raw.decode('latin-1')
+            # Extract content between $ and #
+            if '$' in text:
+                text = text.split('$', 1)[1]
+            if '#' in text:
+                text = text.split('#', 1)[0]
+            return text.strip()
+        except Exception as e:
+            print(f"[-] RSP Read Timeout/Error for '${data}': {e}")
             return ""
 
     async def get_registers(self):
         # RSP packet 'g' reads all general registers
         resp = await self.send_packet("g")
-        if not resp or resp.startswith("E"):
+        if not resp or resp.startswith("E") or len(resp) < 136:
+            print(f"[!] Raw register packet invalid/short: '{resp[:30]}...'")
             return {
                 "R0": 0x20000100, "R1": 0x00000000, "R2": 0x40021000, "R3": 0x00000001,
                 "R4": 0x00000000, "R5": 0x00000000, "R6": 0x00000000, "R7": 0x20004000,
@@ -90,29 +105,32 @@ class GdbRspClient:
             for idx, rname in enumerate(r_names):
                 sub = resp[idx*8 : (idx+1)*8]
                 if len(sub) == 8:
-                    # Little-endian hex to uint32
                     b = bytes.fromhex(sub)
                     val = int.from_bytes(b, byteorder='little')
                     regs[rname] = val
-        except Exception:
-            pass
+            print(f"[+] Registers Read -> PC: 0x{regs.get('PC', 0):08x} | SP: 0x{regs.get('SP', 0):08x} | R0: 0x{regs.get('R0', 0):08x}")
+        except Exception as e:
+            print(f"[-] Register parsing error: {e}")
         return regs if regs else {"PC": 0x08000180, "SP": 0x20004000}
 
     async def step_into(self):
-        # RSP packet 's' single steps target
+        print("[>] Executing Single Step ('s')...")
         resp = await self.send_packet("s")
+        print(f"[<] Step Response: '{resp}'")
+        await asyncio.sleep(0.05)
         return await self.get_registers()
 
     async def continue_run(self):
-        # RSP packet 'c' continues execution
+        print("[>] Executing Continue ('c')...")
         await self.send_packet("c")
         return {"status": "running"}
 
     async def halt(self):
-        # Send break \x03
+        print("[>] Executing Halt (Break)...")
         if self.writer:
             self.writer.write(b'\x03')
             await self.writer.drain()
+        await asyncio.sleep(0.05)
         return await self.get_registers()
 
     def disconnect(self):
@@ -123,7 +141,7 @@ class GdbRspClient:
 gdb_client = None
 
 async def ws_handler(websocket):
-    print(f"[+] Client connected from {websocket.remote_address}")
+    print(f"[+] Browser client connected from {websocket.remote_address}")
     await websocket.send(json.dumps({
         "type": "STATUS",
         "agent": "Firmware Insight Studio Local Agent v1.0",
@@ -135,6 +153,7 @@ async def ws_handler(websocket):
             try:
                 msg = json.loads(message)
                 cmd_type = msg.get("type", "").upper()
+                print(f"[>] WS Received Command: {cmd_type}")
                 
                 if cmd_type == "CONNECT_GDB":
                     host = msg.get("host", DEFAULT_GDB_HOST)
@@ -145,12 +164,11 @@ async def ws_handler(websocket):
                         "connected": success,
                         "message": f"Connected to GDB at {host}:{port}" if success else f"Could not connect to GDB at {host}:{port}"
                     }))
+                    if success:
+                        regs = await gdb_client.get_registers()
+                        await websocket.send(json.dumps({"type": "REGISTERS", "data": regs}))
 
-                elif cmd_type == "GET_REGISTERS":
-                    regs = await gdb_client.get_registers()
-                    await websocket.send(json.dumps({"type": "REGISTERS", "data": regs}))
-
-                elif cmd_type == "STEP_INTO":
+                elif cmd_type == "STEP_INTO" or cmd_type == "STEP_OVER":
                     regs = await gdb_client.step_into()
                     await websocket.send(json.dumps({"type": "STEP_COMPLETE", "data": regs}))
 
