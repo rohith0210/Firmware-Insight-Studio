@@ -497,8 +497,6 @@ def _simulate_execution(instrs: List[dict], entry_addr: int, c: dict) -> dict:
     }
 
 # RECOVERED PSEUDO-C DECOMPILER ENGINE
-def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict) -> dict:
-    name = sym.get("name", "subroutine")
 def _get_human_comment(csym: str) -> str:
     if csym.startswith("HAL_Init"): return "// Initialize STM32 HAL library"
     if csym.startswith("SystemClock_Config"): return "// Configure system clock"
@@ -513,12 +511,33 @@ def _get_human_comment(csym: str) -> str:
     if "Delay" in csym: return "// Delay function"
     return ""
 
-def _decompile_function(name: str, instrs: List[dict], c: dict, has_dwarf: bool) -> dict:
-    sym = c.get("sym_by_name", {}).get(name, {})
-    val = sym.get("value", 0) & ~1
-    size = sym.get("size", len(instrs) * 2 if instrs else 0)
-    decl_file = sym.get("compilation_unit", f"{name}.c")
+def _decompile_function(c: dict, sym: Any, instrs: List[dict], dwarf_info: dict) -> dict:
+    if isinstance(c, str):
+        # Fallback if arguments were inverted by callers
+        c_dict = _get_cache() or {}
+        name = c
+        sym_dict = c_dict.get("sym_by_name", {}).get(name, {"name": name, "value": 0x08000000, "size": 64})
+    elif isinstance(c, dict):
+        c_dict = c
+        if isinstance(sym, str):
+            name = sym
+            sym_dict = c_dict.get("sym_by_name", {}).get(name, {"name": name, "value": 0x08000000, "size": 64})
+        elif isinstance(sym, dict):
+            sym_dict = sym
+            name = sym_dict.get("name", "subroutine")
+        else:
+            name = "subroutine"
+            sym_dict = {"name": name, "value": 0x08000000, "size": 64}
+    else:
+        c_dict = _get_cache() or {}
+        name = "main"
+        sym_dict = {"name": name, "value": 0x08000000, "size": 64}
+
+    val = sym_dict.get("value", 0) & ~1
+    size = sym_dict.get("size", len(instrs) * 2 if instrs else 0)
+    decl_file = sym_dict.get("compilation_unit", f"{name}.c")
     decl_line = 1
+    has_dwarf = bool(dwarf_info)
     
     lines = []
     line_counter = 1
@@ -542,7 +561,7 @@ def _decompile_function(name: str, instrs: List[dict], c: dict, has_dwarf: bool)
         op = i.get("op", "")
 
         if mnl in ("bl", "blx", "call"):
-            res_sym = _resolve_symbol_name(c, op) or op
+            res_sym = _resolve_symbol_name(c_dict, op) or op
             if res_sym in ("$t", "$a", "$d") or res_sym.startswith(("$t.", "$a.", "$d.")):
                 target_addr = _parse_addr(op)
                 res_sym = f"sub_{target_addr & ~1:08x}" if target_addr else op
