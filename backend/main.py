@@ -221,7 +221,8 @@ def parse_elf(path: str) -> dict:
                     "thumb": bool(em == "EM_ARM" and (int(root['value']) & 1)) if root else False}
 
     _CACHE[checksum] = {"bytes": raw, "e_machine": em, "arch": elf.get_machine_arch(), "va2off": va2off,
-                        "sym_by_name": {s["name"]: s for s in symbols if s["size"] > 0}}
+                        "symbols": symbols,
+                        "sym_by_name": {s["name"]: s for s in symbols if s.get("name")}}
     if len(_CACHE) > 8: _CACHE.popitem(last=False)
     has_debug_symbols = any(n.startswith(".debug_") or n.startswith(".zdebug_") for n in sec_names)
     return {"arch": elf.get_machine_arch(), "entry": hex(elf.header["e_entry"]), "elf_class": elf.elfclass,
@@ -344,18 +345,6 @@ def _resolve_symbol_name(c: dict, target_str: str) -> str | None:
     if not target_str or not isinstance(target_str, str):
         return None
 
-    sym_map = c.get("_sym_addr_map")
-    if sym_map is None:
-        sym_map = {}
-        for sym in c.get("symbols", []):
-            s_name = sym.get("name")
-            if s_name and "value" in sym:
-                v = sym["value"]
-                sym_map[v & ~1] = s_name
-                sym_map[v] = s_name
-                sym_map[v | 1] = s_name
-        c["_sym_addr_map"] = sym_map
-
     clean = target_str.strip()
     if clean.startswith("#"):
         clean = clean[1:].strip()
@@ -375,7 +364,32 @@ def _resolve_symbol_name(c: dict, target_str: str) -> str | None:
     if target_addr is None:
         return None
 
-    return sym_map.get(target_addr & ~1) or sym_map.get(target_addr) or sym_map.get(target_addr | 1)
+    sym_map = c.get("_sym_addr_map")
+    if sym_map is None:
+        sym_map = {}
+        for sym in c.get("symbols", []):
+            s_name = sym.get("name")
+            if s_name and "value" in sym:
+                v = sym["value"]
+                sym_map[v & ~1] = s_name
+                sym_map[v] = s_name
+                sym_map[v | 1] = s_name
+        c["_sym_addr_map"] = sym_map
+
+    exact = sym_map.get(target_addr & ~1) or sym_map.get(target_addr) or sym_map.get(target_addr | 1)
+    if exact:
+        return exact
+
+    addr = target_addr & ~1
+    for sym in c.get("symbols", []):
+        s_name = sym.get("name")
+        v = sym.get("value", 0) & ~1
+        sz = sym.get("size", 0)
+        if s_name and sz > 0 and v <= addr < (v + sz):
+            off = addr - v
+            return s_name if off == 0 else f"{s_name}+0x{off:x}"
+
+    return None
 
 def _clean_c_op(op_str: str) -> str:
     if not op_str:
