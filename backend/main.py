@@ -435,15 +435,17 @@ def _simulate_execution(instrs: List[dict], entry_addr: int, c: dict) -> dict:
                 mmio = _resolve_mmio_address(target_addr)
                 mem_ops.append({"step": idx + 1, "type": "MMIO_WRITE", "addr": hex(target_addr), "desc": f"Write peripheral {mmio['expr']}"})
         elif mnl in ("bl", "blx", "call"):
-            res_sym = _resolve_symbol_name(c, op) or f"subroutine_{op}"
+            res_sym = _resolve_symbol_name(c, op) or op
             regs["LR"] = curr_pc + 4
             effect_desc = f"Branch with link to {res_sym}()"
+
+        display_op = _resolve_symbol_name(c, op) if mnl in ("bl", "blx", "call", "b", "b.w", "beq", "bne", "cbz", "cbnz") else op
 
         stack_depth_timeline.append({
             "step": idx + 1,
             "pc": f"0x{curr_pc:08x}",
             "mnemonic": i.get("mn"),
-            "op": op,
+            "op": display_op,
             "stack_depth": stack_depth,
             "sp": f"0x{regs['SP']:08x}"
         })
@@ -451,7 +453,7 @@ def _simulate_execution(instrs: List[dict], entry_addr: int, c: dict) -> dict:
         steps.append({
             "step": idx + 1,
             "pc": f"0x{curr_pc:08x}",
-            "instruction": f"{i.get('mn')} {op}",
+            "instruction": f"{i.get('mn')} {display_op}",
             "effect": effect_desc,
             "registers_snapshot": {**regs}
         })
@@ -533,15 +535,8 @@ def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict
         op = i.get("op", "")
         
         if mnl in ("bl", "blx", "call"):
-            res_sym = _resolve_symbol_name(c, op)
-            if res_sym:
-                calls_made.append((res_sym, 100, "[Symbol Call Graph]"))
-            else:
-                target_addr = _parse_addr(op)
-                if target_addr is not None:
-                    calls_made.append((f"sub_{target_addr & ~1:08x}", 75, "[Disassembly Direct Jump]"))
-                else:
-                    calls_made.append((f"subroutine_{op}", 60, "[Register Call]"))
+            res_sym = _resolve_symbol_name(c, op) or op
+            calls_made.append((res_sym, 100 if not res_sym.startswith("sub_") else 75, "[Symbol Call Graph]" if not res_sym.startswith("sub_") else "[Direct Jump]"))
         elif mnl.startswith("ldr") or mnl.startswith("str"):
             target_addr = _parse_addr(op)
             if target_addr is not None:
