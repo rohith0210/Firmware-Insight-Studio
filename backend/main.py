@@ -1057,6 +1057,9 @@ def _resolve_symbol_name(c: dict, target_str: str) -> Optional[str]:
         parts = clean.split("<")
         clean = parts[0].strip()
 
+    if c.get("sym_by_name") and clean in c["sym_by_name"]:
+        return clean
+
     target_addr = None
     try:
         if clean.startswith("0x") or clean.startswith("0X"):

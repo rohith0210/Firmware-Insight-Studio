@@ -11,7 +11,6 @@ type Props = {
 
 type LeftTab = "symbols" | "objects" | "sections" | "favorites" | "recent";
 type CenterTab = "source" | "assembly" | "decompiler" | "cfg" | "hex";
-type BottomTab = "Console" | "Trace" | "Timeline" | "Warnings" | "Build" | "Statistics";
 
 export default function InvestigationWorkspace({
   result,
@@ -22,7 +21,6 @@ export default function InvestigationWorkspace({
 }: Props) {
   const [leftTab, setLeftTab] = useState<LeftTab>("symbols");
   const [centerTab, setCenterTab] = useState<CenterTab>("source");
-  const [bottomTab, setBottomTab] = useState<BottomTab>("Console");
   const [search, setSearch] = useState("");
   const [splitView, setSplitView] = useState<boolean>(false);
 
