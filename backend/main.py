@@ -692,7 +692,7 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
                 "schema": cfg["schema"]
             }
         import capstone as cs
-        thumb = bool(cfg["thumb"] and (val & 1))
+        thumb = bool(cfg["thumb"])
         mode = cs.CS_MODE_THUMB if thumb else cfg["mode"]
         try: md = cs.Cs(ca, mode)
         except Exception: md = cs.Cs(ca, 0)
@@ -1006,7 +1006,7 @@ def get_analysis(checksum: str = Query(default=""), name: str = Query(default="m
             pass
     else:
         import capstone as cs
-        thumb = bool(cfg["thumb"] and (val & 1))
+        thumb = bool(cfg["thumb"])
         mode = cs.CS_MODE_THUMB if thumb else cfg["mode"]
         try: md = cs.Cs(ca, mode)
         except Exception: md = cs.Cs(ca, 0)
