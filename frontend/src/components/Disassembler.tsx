@@ -71,14 +71,6 @@ export default function Disassembler({
   const [steps, setSteps] = useState(0);
   const [now, setNow] = useState<Set<string>>(new Set());
 
-  // Stack Frame Simulation
-  const [stackMem] = useState<Array<{ addr: number; val: number; label: string }>>([
-    { addr: 0x20003ffc, val: 0x080001b1, label: "LR (return address)" },
-    { addr: 0x20003ff8, val: 0x20000100, label: "R0 (arg0 pointer)" },
-    { addr: 0x20003ff4, val: 0x00000000, label: "R4 (saved register)" },
-    { addr: 0x20003ff0, val: 0x20004000, label: "R7 (frame pointer)" },
-  ]);
-
   const pcRef = useRef<number | null>(pc);
   const bpsRef = useRef<Set<number>>(bps);
   const disRef = useRef<Dis | null>(dis);
@@ -736,48 +728,100 @@ export default function Disassembler({
 
           {/* REGISTERS PANE */}
           {rightTab === "registers" && (
-            <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
-              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
-                <span>CPU Core Registers</span>
-                <span className="text-[var(--a)]">GDB RSP Live</span>
+            !isLiveDebug && !wsConnected ? (
+              <div className="p-4 border-b border-[var(--line)] bg-black/40 text-center space-y-2.5 mono text-xs">
+                <div className="text-gray-400 font-bold flex items-center justify-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+                  <span>⚪ HARDWARE DISCONNECTED</span>
+                </div>
+                <p className="text-[11px] text-gray-400 leading-relaxed">
+                  Connect a Local Debug Agent (<code className="text-cyan-300">ws://127.0.0.1:9001</code>) & ST-Link probe to view live hardware CPU core registers.
+                </p>
+                <button
+                  onClick={connectLocalAgent}
+                  className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 mx-auto"
+                >
+                  <span>🔌</span> Connect Local Agent
+                </button>
               </div>
-              <div className="grid grid-cols-2 gap-2 mono text-xs">
-                {Object.entries(regs).map(([rName, val]) => {
-                  const isTouched = now.has(rName.toLowerCase());
-                  return (
-                    <div
-                      key={rName}
-                      className={`p-1.5 rounded border flex justify-between items-center transition ${
-                        isTouched
-                          ? "bg-amber-500/20 border-amber-400 text-amber-200"
-                          : "bg-black/30 border-[var(--line)] text-gray-200"
-                      }`}
-                    >
-                      <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
-                      <span className="font-mono text-[11px]">
-                        0x{(val >>> 0).toString(16).padStart(8, "0")}
-                      </span>
-                    </div>
-                  );
-                })}
+            ) : (
+              <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
+                <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between items-center">
+                  <span>CPU Core Registers</span>
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    🟢 Live GDB RSP
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mono text-xs">
+                  {Object.entries(regs).map(([rName, val]) => {
+                    const isTouched = now.has(rName.toLowerCase());
+                    const hexVal = (val >>> 0).toString(16).padStart(8, "0");
+                    return (
+                      <div
+                        key={rName}
+                        onClick={() => {
+                          if (onNavigateView) onNavigateView("memory");
+                          push("b", `🔍 Inspecting memory at address 0x${hexVal} (${rName})`);
+                        }}
+                        title={`Click to inspect memory at address 0x${hexVal}`}
+                        className={`p-1.5 rounded border flex justify-between items-center transition cursor-pointer hover:border-[var(--a)] ${
+                          isTouched
+                            ? "bg-amber-500/20 border-amber-400 text-amber-200"
+                            : "bg-black/30 border-[var(--line)] text-gray-200"
+                        }`}
+                      >
+                        <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
+                        <span className="font-mono text-[11px] text-emerald-400 underline decoration-dotted">
+                          0x{hexVal}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )
           )}
 
           {/* STACK INSPECTOR PANE */}
           {rightTab === "stack" && (
-            <div className="p-3 bg-black/20 space-y-2 flex-1">
-              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider">
-                Stack Frame Inspection
+            <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-3 mono text-xs">
+              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
+                <span>Call Stack / Frames</span>
+                <span className="text-[var(--a)]">{isLiveDebug || wsConnected ? "🟢 Live GDB Frame" : "Static Frame"}</span>
               </div>
-              <div className="space-y-1.5 mono text-[11px]">
-                {stackMem.map(stk => (
-                  <div key={stk.addr} className="p-2 rounded bg-black/40 border border-[var(--line)] flex justify-between items-center">
-                    <span className="text-[var(--b)] font-bold">0x{stk.addr.toString(16)}</span>
-                    <span className="text-gray-200 font-mono">0x{stk.val.toString(16)}</span>
-                    <span className="text-[10px] text-[var(--mut)] truncate max-w-[110px]">{stk.label}</span>
+              <div className="space-y-2">
+                <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400 font-bold text-sm">🟡</span>
+                    <div>
+                      <div className="font-bold text-amber-300 text-xs">{name}</div>
+                      <div className="text-[10px] text-gray-400">PC: 0x{(pc || 0).toString(16).padStart(8, "0")}</div>
+                    </div>
                   </div>
-                ))}
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">FRAME #0</span>
+                </div>
+
+                {regs.LR && regs.LR !== 0xffffffff ? (
+                  <>
+                    <div className="text-center text-gray-500 text-[10px] font-bold">↓</div>
+                    <div className="p-2.5 rounded bg-black/40 border border-white/10 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 font-bold text-sm">⚪</span>
+                        <div>
+                          <div className="font-bold text-gray-300 text-xs">caller_subroutine</div>
+                          <div className="text-[10px] text-gray-400">LR: 0x{(regs.LR || 0).toString(16).padStart(8, "0")}</div>
+                        </div>
+                      </div>
+                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-gray-400 text-[9px] font-bold">FRAME #1</span>
+                    </div>
+                  </>
+                ) : null}
+
+                <div className="pt-2 border-t border-[var(--line)] text-[10px] text-gray-400 flex justify-between items-center">
+                  <span>Stack Pointer (SP):</span>
+                  <span className="font-bold text-cyan-300 font-mono">0x{(regs.SP || 0x20004000).toString(16).padStart(8, "0")}</span>
+                </div>
               </div>
             </div>
           )}
