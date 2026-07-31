@@ -18,9 +18,12 @@
 
 <!-- DEMO_PLACEHOLDER_START -->
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/demo_overview.png" alt="Firmware Insight Studio Interface" width="90%"/>
-  <br/>
-  <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
+  <img
+    src="https://github.com/user-attachments/assets/8d6d34ec-94bb-45c3-98de-8cbfb8392b21"
+    width="300"
+    alt="Firmware Insight Studio Logo"
+  />
+  <br/> <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
 </p>
 <!-- DEMO_PLACEHOLDER_END -->
 
@@ -158,33 +161,42 @@ Disassembly decoding and register schema attribution support the following targe
 ## Screenshots
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_overview.png" alt="Overview Workspace" width="48%"/>
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_treemap.png" alt="Memory Analysis Treemap" width="48%"/>
+  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-04-11" src="https://github.com/user-attachments/assets/61eaaa0b-bd86-41b6-ba98-8458b002dc87" alt="Overview Workspace" width="48%" />
+  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-06-54" src="https://github.com/user-attachments/assets/25229322-3e6c-4533-b0c8-d22dd28712e6" alt="Memory Analysis Treemap" width="48%"/>
 </p>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_investigator.png" alt="Code Investigator Workspace" width="48%"/>
-  <img src="https://raw.githubusercontent.com/rohith0210/Firmware-Insight-Studio/main/assets/screenshot_callgraph.png" alt="Call Graph Inspector" width="48%"/>
+  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/8dfcf1f0-288b-4aa3-9033-a8d17b5c72ab" alt="Code Investigator Workspace" width="48%"/>
+  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/0aa55eb9-c4ed-4e86-affa-b037ff49c013" alt="Call Graph Inspector" width="48%"/>
 </p>
 
 ---
 
-## Technical Architecture
+## 🏗️ Technical Architecture
 
-```text
-+-----------------------------------------------------------------------------------+
-|                           Frontend (React 18 + Vite + TS)                         |
-|  Sidebar Navigation  .  Header Ribbon  .  Global Search Modal  .  Error Boundary  |
-|  Overview  .  Memory Map  .  Code Investigator  .  Call Graph  .  Execution      |
-+-----------------------------------------+-----------------------------------------+
-                                          | REST API (HTTP JSON)
-+-----------------------------------------+-----------------------------------------+
-|                               Backend (FastAPI + Python)                          |
-|  - main.py           : REST Endpoints & Analysis Pipeline Controller              |
-|  - pyelftools        : ELF Section, Symbol, Relocation & DWARF Parser              |
-|  - Capstone Engine   : Multi-architecture Disassembly Decoder                      |
-|  - Disk Cache        : Persistent Binary Payload Store (/tmp/fis_elf_cache)       |
-|  - cli.py            : Headless CI/CD Datasheet & Diff Engine                     |
-+-----------------------------------------------------------------------------------+
+```mermaid
+flowchart LR
+
+    A["🖥️ React + Vite + TypeScript<br/>Frontend Workbench"]
+    B["⚡ FastAPI Backend"]
+    C["📦 Analysis Engine"]
+    D["📄 pyelftools"]
+    E["🔍 Capstone"]
+    F["🧠 Firmware Intelligence"]
+    G["📊 Interactive UI"]
+
+    A -->|REST API| B
+
+    B --> C
+
+    C --> D
+    C --> E
+
+    D --> F
+    E --> F
+
+    F --> G
+
+    G --> A
 ```
 
 ---
