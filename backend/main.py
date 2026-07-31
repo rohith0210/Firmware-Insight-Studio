@@ -480,195 +480,112 @@ def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict
     
     lines = []
     
-    # Header comments
-    lines.append({
-        "num": 1,
-        "text": f"/* ===================================================================== */",
-        "confidence": 100,
-        "evidence": "Binary Intelligence Engine AST"
-    })
-    lines.append({
-        "num": 2,
-        "text": f"/* RECOVERED PSEUDO-C DECOMPILATION FOR: {name}() */",
-        "confidence": 100,
-        "evidence": "Symbol Table + ELF Header"
-    })
-    lines.append({
-        "num": 3,
-        "text": f"/* Address: 0x{val:08x} | Size: {size} Bytes | File: {decl_file}:{decl_line} */",
-        "confidence": 100 if has_dwarf else 85,
-        "evidence": "[DWARF Metadata]" if has_dwarf else "[Symbol Table Recovery]"
-    })
-    lines.append({
-        "num": 4,
-        "text": f"/* ===================================================================== */",
-        "confidence": 100,
-        "evidence": "Engine Layout"
-    })
-    lines.append({"num": 5, "text": "", "confidence": 100, "evidence": "Layout"})
-    
-    ret_type = "int" if name == "main" else "void"
-    if has_dwarf:
-        lines.append({
-            "num": 6,
-            "text": f"{ret_type} {name}(void) {{ // 100% [DWARF Subprogram]",
-            "confidence": 100,
-            "evidence": "[DWARF Subprogram]"
-        })
-    else:
-        lines.append({
-            "num": 6,
-            "text": f"{ret_type} {name}(void) {{ // 90% [Symbol Table]",
-            "confidence": 90,
-            "evidence": "[Symbol Table]"
-        })
+    lines = []
+    line_counter = 1
 
-    line_counter = 7
-    
-    # Analyze body statements from instructions
+    ret_type = "int" if name == "main" else "void"
+    lines.append({
+        "num": line_counter,
+        "text": f"{ret_type} {name}(void)\n{{",
+        "confidence": 100,
+        "evidence": "Function Declaration"
+    })
+    line_counter += 1
+
     calls_made = []
+    seen_calls = set()
     mmio_accesses = []
-    branch_conditions = []
-    
+    seen_mmio = set()
+
     for i in instrs:
         mnl = i.get("mn", "").lower().split(".")[0]
         op = i.get("op", "")
-        
+
         if mnl in ("bl", "blx", "call"):
             res_sym = _resolve_symbol_name(c, op) or op
-            calls_made.append((res_sym, 100 if not res_sym.startswith("sub_") else 75, "[Symbol Call Graph]" if not res_sym.startswith("sub_") else "[Direct Jump]"))
+            if res_sym in ("$t", "$a", "$d") or res_sym.startswith(("$t.", "$a.", "$d.")):
+                target_addr = _parse_addr(op)
+                res_sym = f"sub_{target_addr & ~1:08x}" if target_addr else op
+            if res_sym not in seen_calls:
+                seen_calls.add(res_sym)
+                calls_made.append(res_sym)
         elif mnl.startswith("ldr") or mnl.startswith("str"):
             target_addr = _parse_addr(op)
             if target_addr is not None:
                 mmio = _resolve_mmio_address(target_addr)
-                if mmio["known"]:
-                    mmio_accesses.append((mmio["expr"], mmio["desc"], 92, f"[MMIO {mmio['periph']}]"))
-                else:
-                    mmio_accesses.append((mmio["expr"], "SRAM Access", 80, "[Pointer Load/Store]"))
-        elif mnl in ("beq", "bne", "cbz", "cbnz", "bgt", "blt"):
-            branch_conditions.append((mnl, op, 85, "[CFG Conditional Branch]"))
+                if mmio["known"] and mmio["expr"] not in seen_mmio:
+                    seen_mmio.add(mmio["expr"])
+                    mmio_accesses.append((mmio["expr"], mmio["desc"]))
 
-    # Output variable setup
-    lines.append({
-        "num": line_counter,
-        "text": f"    // Stack Frame & Register Local Variable Context",
-        "confidence": 95,
-        "evidence": "[Register Allocation Analysis]"
-    })
-    line_counter += 1
-    
-    lines.append({
-        "num": line_counter,
-        "text": f"    uint32_t status = 0;",
-        "confidence": 88,
-        "evidence": "[CFG Dataflow Recovery]"
-    })
-    line_counter += 1
-    
-    # Output MMIO accesses
     if mmio_accesses:
-        lines.append({
-            "num": line_counter,
-            "text": f"    ",
-            "confidence": 100,
-            "evidence": "Layout"
-        })
-        line_counter += 1
-        lines.append({
-            "num": line_counter,
-            "text": f"    // Hardware Peripheral MMIO Register Initialization",
-            "confidence": 95,
-            "evidence": "[Peripheral Detection Engine]"
-        })
-        line_counter += 1
-        
-        for expr, desc, conf, ev in mmio_accesses[:6]:
+        for expr, desc in mmio_accesses[:6]:
             lines.append({
                 "num": line_counter,
-                "text": f"    {expr} = 0x00000001; // {conf}% {ev} - {desc}",
-                "confidence": conf,
-                "evidence": ev
+                "text": f"    {expr} = 0x1;",
+                "confidence": 90,
+                "evidence": desc
             })
             line_counter += 1
+        lines.append({"num": line_counter, "text": "", "confidence": 100, "evidence": "Layout"})
+        line_counter += 1
 
-    # Output subroutine calls
     if calls_made:
-        lines.append({
-            "num": line_counter,
-            "text": f"    ",
-            "confidence": 100,
-            "evidence": "Layout"
-        })
-        line_counter += 1
-        lines.append({
-            "num": line_counter,
-            "text": f"    // Subroutine Invocation Flow",
-            "confidence": 98,
-            "evidence": "[Call Graph Control Flow]"
-        })
-        line_counter += 1
-        
-        for csym, conf, ev in calls_made:
+        for csym in calls_made:
             lines.append({
                 "num": line_counter,
-                "text": f"    {csym}(); // {conf}% {ev}",
-                "confidence": conf,
-                "evidence": ev
+                "text": f"    {csym}();",
+                "confidence": 100,
+                "evidence": "Function Call"
             })
             line_counter += 1
+        lines.append({"num": line_counter, "text": "", "confidence": 100, "evidence": "Layout"})
+        line_counter += 1
 
-    # Output control flow loop/return
-    lines.append({
-        "num": line_counter,
-        "text": f"    ",
-        "confidence": 100,
-        "evidence": "Layout"
-    })
-    line_counter += 1
-    
     if name == "main":
         lines.append({
             "num": line_counter,
-            "text": f"    while (1) {{ // 100% [Main Infinite Superloop Pattern]",
+            "text": "    while (1)",
             "confidence": 100,
-            "evidence": "[Embedded Superloop Pattern]"
+            "evidence": "Superloop"
         })
         line_counter += 1
         lines.append({
             "num": line_counter,
-            "text": f"        // Background Task Loop",
-            "confidence": 90,
-            "evidence": "[Control Flow Graph Loop Node]"
+            "text": "    {",
+            "confidence": 100,
+            "evidence": "Loop Start"
         })
         line_counter += 1
         lines.append({
             "num": line_counter,
-            "text": f"    }}",
+            "text": "    }",
             "confidence": 100,
-            "evidence": "Loop Exit"
+            "evidence": "Loop End"
         })
+        line_counter += 1
+        lines.append({"num": line_counter, "text": "", "confidence": 100, "evidence": "Layout"})
         line_counter += 1
         lines.append({
             "num": line_counter,
-            "text": f"    return 0; // 100% [Standard C Entry Return]",
+            "text": "    return 0;",
             "confidence": 100,
-            "evidence": "[Standard Entry Return]"
+            "evidence": "Return"
         })
         line_counter += 1
     else:
         lines.append({
             "num": line_counter,
-            "text": f"    return; // 95% [Subroutine Exit Epilogue]",
-            "confidence": 95,
-            "evidence": "[Subroutine Epilogue (BX LR / POP PC)]"
+            "text": "    return;",
+            "confidence": 100,
+            "evidence": "Return"
         })
         line_counter += 1
 
     lines.append({
         "num": line_counter,
-        "text": f"}}",
+        "text": "}",
         "confidence": 100,
-        "evidence": "Scope End"
+        "evidence": "Function End"
     })
 
     return {
@@ -1060,7 +977,7 @@ def resolve_symbol_full(c: dict, target_str: str) -> dict:
         clean = clean.split("<")[0].strip()
 
     # 1. Exact match by symbol name
-    if c.get("sym_by_name") and clean in c["sym_by_name"]:
+    if c.get("sym_by_name") and clean in c["sym_by_name"] and not clean.startswith("$"):
         s_obj = c["sym_by_name"][clean]
         v = s_obj.get("value", 0) & ~1
         return {
@@ -1087,21 +1004,22 @@ def resolve_symbol_full(c: dict, target_str: str) -> dict:
 
     norm_addr = target_addr & ~1
 
-    # 2. Exact match by address in symbol map
+    # 2. Exact match by address in symbol map (prioritizing non-mapping symbols & functions)
     sym_map = c.get("_sym_addr_map")
     if sym_map is None:
         sym_map = {}
         for sym in c.get("symbols", []):
-            s_name = sym.get("name")
-            if s_name and "value" in sym:
+            s_name = sym.get("name", "")
+            if s_name and not s_name.startswith("$") and "value" in sym:
                 v = sym["value"]
-                sym_map[v & ~1] = sym
-                sym_map[v] = sym
-                sym_map[v | 1] = sym
+                is_func = sym.get("type") == "STT_FUNC"
+                for k in (v & ~1, v, v | 1):
+                    if k not in sym_map or is_func:
+                        sym_map[k] = sym
         c["_sym_addr_map"] = sym_map
 
     exact_sym = sym_map.get(norm_addr) or sym_map.get(target_addr)
-    if exact_sym:
+    if exact_sym and not exact_sym.get("name", "").startswith("$"):
         s_name = exact_sym.get("name")
         return {
             "name": s_name,
