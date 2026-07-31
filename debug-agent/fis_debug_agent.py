@@ -53,7 +53,16 @@ class GdbRspClient:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self.connected = True
             # Send GDB RSP initial handshake '+' and '$qSupported' sequence expected by OpenOCD
-            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
+            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+;QStartNoAckMode+#0c")
+            await self.writer.drain()
+            try:
+                _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
+                self.writer.write(b"+")
+                await self.writer.drain()
+            except Exception:
+                pass
+            # Request NoAckMode from OpenOCD
+            self.writer.write(b"$QStartNoAckMode#b0")
             await self.writer.drain()
             try:
                 _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
@@ -78,15 +87,13 @@ class GdbRspClient:
         self.writer.write(pkt.encode('latin-1'))
         await self.writer.drain()
         
-        # Read ACK '+'
         try:
-            ack = await asyncio.wait_for(self.reader.read(1), timeout=2.0)
-            if ack != b'+':
-                return ""
-            # Read response packet
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
-            chk_read = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
-            resp = raw.decode('latin-1').lstrip('$').rstrip('#')
+            _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
+            resp = raw.decode('latin-1').lstrip('$').lstrip('+').rstrip('#')
+            # Send ACK '+' back to OpenOCD
+            self.writer.write(b"+")
+            await self.writer.drain()
             return resp
         except Exception:
             return ""
