@@ -42,8 +42,35 @@ export default function SourceViewer({ result, targetSymbol, onNavigateView }: P
     fetch(url)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        setSourceData(data);
-        setLoading(false);
+        if (data && data.found && data.lines && data.lines.length > 0) {
+          setSourceData(data);
+          setLoading(false);
+        } else {
+          const decompUrl = checksum
+            ? `${apiBase}/api/decompiler?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(symbolName)}`
+            : `${apiBase}/api/decompiler?name=${encodeURIComponent(symbolName)}`;
+
+          fetch(decompUrl)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+              if (d && d.pseudocode && d.pseudocode.length > 0) {
+                setSourceData({
+                  found: true,
+                  filename: `${symbolName}.c (Decompiled)`,
+                  path: `Reconstructed AST Pseudocode`,
+                  decl_line: 1,
+                  lines: d.pseudocode.map((l: string, idx: number) => ({ num: idx + 1, text: l }))
+                });
+              } else {
+                setSourceData(data || { found: false, reason: "DWARF_MISSING" });
+              }
+              setLoading(false);
+            })
+            .catch(() => {
+              setSourceData(data || { found: false, reason: "DWARF_MISSING" });
+              setLoading(false);
+            });
+        }
       })
       .catch(() => {
         setSourceData({ found: false, reason: "DWARF_MISSING" });

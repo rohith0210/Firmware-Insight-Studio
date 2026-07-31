@@ -108,17 +108,39 @@ export default function InvestigationWorkspace({
     fetch(url)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        setSourceData(data);
-        setLoadingSource(false);
-        // Automatic Assembly Fallback if source code is unavailable
-        if (data && !data.found && centerTab === "source") {
-          setCenterTab("assembly");
+        if (data && data.found && data.lines && data.lines.length > 0) {
+          setSourceData(data);
+          setLoadingSource(false);
+        } else {
+          const decompUrl = checksum
+            ? `${apiBase}/api/decompiler?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
+            : `${apiBase}/api/decompiler?name=${encodeURIComponent(activeSym.name)}`;
+
+          fetch(decompUrl)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+              if (d && d.pseudocode && d.pseudocode.length > 0) {
+                setSourceData({
+                  found: true,
+                  filename: `${activeSym.name}.c (Decompiled)`,
+                  path: `Reconstructed AST Pseudocode`,
+                  decl_line: 1,
+                  lines: d.pseudocode.map((l: string, idx: number) => ({ num: idx + 1, text: l }))
+                });
+              } else {
+                setSourceData(data || { found: false, reason: "DWARF_MISSING" });
+              }
+              setLoadingSource(false);
+            })
+            .catch(() => {
+              setSourceData(data || { found: false, reason: "DWARF_MISSING" });
+              setLoadingSource(false);
+            });
         }
       })
       .catch(() => {
         setSourceData({ found: false, reason: "DWARF_MISSING" });
         setLoadingSource(false);
-        if (centerTab === "source") setCenterTab("assembly");
       });
   }, [activeSym?.name, result?.checksum]);
 
