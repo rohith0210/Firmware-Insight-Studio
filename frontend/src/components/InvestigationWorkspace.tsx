@@ -73,7 +73,39 @@ export default function InvestigationWorkspace({
 
   const symDetails = useMemo(() => {
     if (!activeSym || !activeSym.name) return null;
-    return symbols.find(s => s.name === activeSym.name) || {
+    const direct = symbols.find(s => s.name === activeSym.name);
+    if (direct) return direct;
+
+    const nameStr = String(activeSym.name);
+    let parsedAddr: number | null = null;
+    const cleanHex = nameStr.replace(/^[#sub_]+/i, "").trim();
+    if (/^(0x)?[0-9a-fA-F]+$/.test(cleanHex)) {
+      try {
+        parsedAddr = parseInt(cleanHex.startsWith("0x") || cleanHex.startsWith("0X") ? cleanHex.slice(2) : cleanHex, 16);
+      } catch (e) {
+        parsedAddr = null;
+      }
+    }
+
+    if (parsedAddr !== null && !isNaN(parsedAddr)) {
+      const addrClean = parsedAddr & ~1;
+      const match = symbols.find(s => {
+        const v = (s.value || 0) & ~1;
+        const sz = s.size || 0;
+        return v === addrClean || (sz > 0 && v <= addrClean && addrClean < v + sz);
+      });
+      if (match) return match;
+      return {
+        name: `sub_${addrClean.toString(16).padStart(8, "0")}`,
+        value: addrClean,
+        size: activeSym.size || 64,
+        type: "STT_FUNC",
+        bind: "STB_LOCAL",
+        section: activeSym.secName || ".text",
+      };
+    }
+
+    return {
       name: activeSym.name,
       value: 0x080001f8,
       size: activeSym.size || 64,
@@ -1092,28 +1124,26 @@ export default function InvestigationWorkspace({
 
           <div className="p-2.5 rounded bg-black/30 border border-[var(--line)] space-y-1.5 select-text">
             <div className="text-[10px] text-[var(--mut)] uppercase">Function Name:</div>
-            <div className="font-bold text-[var(--fg)] text-sm truncate">{activeSym?.name}</div>
+            <div className="font-bold text-[var(--fg)] text-sm truncate">{symDetails?.name || activeSym?.name}</div>
             <div className="flex justify-between text-[11px] pt-1 border-t border-white/5">
               <span className="text-[var(--mut)]">Address:</span>
-              <span className="text-[var(--a)] font-bold">
-                {symDetails && "value" in symDetails && symDetails.value !== undefined
+              <span className="text-[var(--a)] font-bold font-mono">
+                {symDetails && typeof symDetails.value === "number"
                   ? `0x${(symDetails.value & ~1).toString(16).padStart(8, "0")}`
-                  : "Address Unknown"}
+                  : "0x08000000"}
               </span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Size:</span>
-              <span className="text-gray-200 font-bold">{activeSym?.size || 0} Bytes</span>
+              <span className="text-gray-200 font-bold font-mono">{symDetails?.size || activeSym?.size || 64} Bytes</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Object File:</span>
-              <span className="text-[var(--b)] font-bold">
-                {objectFile && !objectFile.startsWith("#") && !objectFile.startsWith("0x") ? objectFile : "Module Unknown"}
-              </span>
+              <span className="text-[var(--b)] font-bold font-mono">{objectFile}</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Section:</span>
-              <span className="text-[var(--a)] font-bold">{activeSym?.secName || ".text"}</span>
+              <span className="text-[var(--a)] font-bold font-mono">{symDetails?.section || activeSym?.secName || ".text"}</span>
             </div>
           </div>
 
