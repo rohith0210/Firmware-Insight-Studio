@@ -293,10 +293,7 @@ def _arch_map(em):
     if not cfg: return None, None
     try:
         import capstone as cs
-    except Exception as e:
-        import traceback
-        print(f"CAPSTONE IMPORT FAILED: {e}")
-        traceback.print_exc()
+    except Exception:
         return None, cfg
 
     machine = str(em).upper()
