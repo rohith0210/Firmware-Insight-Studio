@@ -332,9 +332,50 @@ def _objdump_disasm(c, s, cfg):
             addr, raw, mn, op = int(m.group(1), 16), m.group(2).strip(), m.group(3), m.group(4).strip()
         t, w = _parse_regs(op, cfg["pat"], cfg["canon"], mn)
         touched |= set(t); written |= set(w)
+        if mn.lower() in ("bl", "blx", "b", "beq", "bne", "b.w", "cbz", "cbnz", "call"):
+            res_sym = _resolve_symbol_name(c, op)
+            if res_sym and "<" not in op:
+                op = f"{op} <{res_sym}>"
         instrs.append({"addr": addr, "bytes": raw, "mn": mn, "op": op, "t": t, "w": w})
     if not instrs: raise HTTPException(501, f"{cfg['tool']} could not decode this function")
     return instrs, sorted(touched), sorted(written)
+
+def _resolve_symbol_name(c: dict, target_str: str) -> str | None:
+    if not target_str or not isinstance(target_str, str):
+        return None
+
+    sym_map = c.get("_sym_addr_map")
+    if sym_map is None:
+        sym_map = {}
+        for sym in c.get("symbols", []):
+            s_name = sym.get("name")
+            if s_name and "value" in sym:
+                v = sym["value"]
+                sym_map[v & ~1] = s_name
+                sym_map[v] = s_name
+        c["_sym_addr_map"] = sym_map
+
+    clean = target_str.strip()
+    if clean.startswith("#"):
+        clean = clean[1:].strip()
+    if "<" in clean:
+        parts = clean.split("<")
+        clean = parts[0].strip()
+
+    target_addr = None
+    try:
+        if clean.startswith("0x") or clean.startswith("0X"):
+            target_addr = int(clean, 16)
+        elif clean.isdigit():
+            target_addr = int(clean, 10)
+    except ValueError:
+        return None
+
+    if target_addr is None:
+        return None
+
+    return sym_map.get(target_addr & ~1) or sym_map.get(target_addr)
+
 @app.get("/api/disasm")
 def disasm(checksum: str = Query(default=""), name: str = Query(default="main")):
     c = _get_cache(checksum)
@@ -401,7 +442,12 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
         for i in md.disasm(code, addr):
             t, w = _parse_regs(i.op_str, cfg["pat"], cfg["canon"], i.mnemonic)
             touched |= set(t); written |= set(w)
-            instrs.append({"addr": i.address, "bytes": i.bytes.hex(" "), "mn": i.mnemonic, "op": i.op_str, "t": t, "w": w})
+            op_str = i.op_str
+            if i.mnemonic.lower() in ("bl", "blx", "b", "beq", "bne", "b.w", "cbz", "cbnz", "call"):
+                res_sym = _resolve_symbol_name(c, op_str)
+                if res_sym and "<" not in op_str:
+                    op_str = f"{op_str} <{res_sym}>"
+            instrs.append({"addr": i.address, "bytes": i.bytes.hex(" "), "mn": i.mnemonic, "op": op_str, "t": t, "w": w})
         
         if not instrs:
             try:
@@ -594,26 +640,51 @@ def get_decompiler(checksum: str = Query(default=""), name: str = Query(default=
             f"void {name}(void) {{"
         ]
         for i in instrs:
-            mn = i.get("mn", "")
-            op = i.get("op", "")
+            mn = i.get("mn", "").lower()
+            op = i.get("op", "").strip()
             if mn in ("bl", "blx", "b", "call"):
-                target = op.strip()
-                if not target.startswith("0x"):
-                    lines.append(f"    {target}();")
+                res_sym = _resolve_symbol_name(c, op)
+                if res_sym:
+                    lines.append(f"    {res_sym}();")
                 else:
-                    lines.append(f"    subroutine_{target.replace('0x', '')}();")
+                    clean_op = op.lstrip('#').strip()
+                    if "<" in clean_op:
+                        sym_name = clean_op.split("<")[1].rstrip(">").strip()
+                        lines.append(f"    {sym_name}();")
+                    elif clean_op.startswith("0x"):
+                        lines.append(f"    subroutine_{clean_op.replace('0x', '')}();")
+                    else:
+                        lines.append(f"    {op}();")
             elif mn.startswith("str"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    lines.append(f"    *{parts[1]} = {parts[0]};")
+                    val_op = parts[0]
+                    dst_op = parts[1]
+                    res_sym = _resolve_symbol_name(c, dst_op)
+                    if res_sym:
+                        lines.append(f"    *{res_sym} = {val_op};")
+                    else:
+                        lines.append(f"    *{dst_op} = {val_op};")
             elif mn.startswith("ldr"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    lines.append(f"    {parts[0]} = *({parts[1]});")
+                    dst_op = parts[0]
+                    src_op = parts[1]
+                    res_sym = _resolve_symbol_name(c, src_op)
+                    if res_sym:
+                        lines.append(f"    {dst_op} = {res_sym};")
+                    else:
+                        lines.append(f"    {dst_op} = *({src_op});")
             elif mn in ("mov", "movs", "movw", "movt"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    lines.append(f"    {parts[0]} = {parts[1]};")
+                    dst_op = parts[0]
+                    src_op = parts[1]
+                    res_sym = _resolve_symbol_name(c, src_op)
+                    if res_sym:
+                        lines.append(f"    {dst_op} = &{res_sym};")
+                    else:
+                        lines.append(f"    {dst_op} = {src_op};")
             elif mn in ("add", "adds", "sub", "subs"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) == 3:
