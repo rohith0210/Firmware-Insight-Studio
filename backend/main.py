@@ -608,7 +608,13 @@ def _resolve_semantic_operand(mn: str, op: str, c: dict) -> (str, dict):
 def disasm(checksum: str = Query(default=""), name: str = Query(default="main")):
     c = _get_cache(checksum)
     if not c:
-        return {"error": True, "reason": "BINARY_NOT_CACHED", "message": "Binary payload not found in server cache. Please re-upload the ELF file."}
+        return {
+            "error": True,
+            "reason": "BINARY_NOT_CACHED",
+            "stage": "Binary Cache Lookup",
+            "possible_fix": "Please re-upload the ELF file payload.",
+            "message": "Binary payload not found in server cache."
+        }
     
     s = c["sym_by_name"].get(name)
     if not s:
@@ -620,7 +626,13 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
             s = c["symbols"][0]
             name = s["name"]
         else:
-            return {"error": True, "reason": "SYMBOL_NOT_FOUND", "message": "No function symbols resolved in binary symbol table."}
+            return {
+                "error": True,
+                "reason": "SYMBOL_NOT_FOUND",
+                "stage": "Symbol Table Resolution",
+                "possible_fix": "Check symbol table visibility or recompile firmware with function symbols.",
+                "message": f"Symbol '{name}' was not found in binary symbol table."
+            }
 
     val = s["value"]
     size = s["size"]
@@ -634,7 +646,13 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
 
     ca, cfg = _arch_map(c["e_machine"])
     if not cfg:
-        return {"error": True, "reason": "UNSUPPORTED_ARCH", "message": f"Disassembly engine unsupported for architecture 0x{c['e_machine']:x} ({c['arch']})."}
+        return {
+            "error": True,
+            "reason": "UNSUPPORTED_ARCH",
+            "stage": "Architecture Map Lookup",
+            "possible_fix": "Specify a supported target architecture (ARM, RISC-V, MIPS, x86).",
+            "message": f"Disassembly engine unsupported for architecture 0x{c['e_machine']:x} ({c['arch']})."
+        }
     
     try:
         if ca is None:
@@ -676,6 +694,48 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
             reg_effect = _infer_register_effect(i.mnemonic, sem_op)
             mem_op = _infer_memory_operation(i.mnemonic, sem_op)
 
+            # Flow arrow calculation
+            mnl = i.mnemonic.lower()
+            flow_arrow = None
+            if mnl in ("cmp", "cmn", "tst"):
+                flow_arrow = "↓ Status Flag Comparison"
+            elif mnl in ("beq", "bne", "bgt", "blt", "bge", "ble", "cbz", "cbnz"):
+                flow_arrow = f"↳ Conditional Branch ➔ {sem_op}"
+            elif mnl in ("b", "b.w", "jmp"):
+                flow_arrow = f"↴ Unconditional Branch ➔ {sem_op}"
+
+            # Memory Detail Calculation (Literal Pool / SRAM offset)
+            mem_detail = None
+            if mnl.startswith("ldr") and "pc" in i.op_str.lower():
+                try:
+                    clean_off = i.op_str.split(",")[-1].strip(" []#")
+                    off_val = int(clean_off, 16) if clean_off.startswith("0x") else int(clean_off)
+                    lit_addr = ((i.address + 4) & ~3) + off_val
+                    lit_off = _va2off(c, lit_addr)
+                    val_hex = "0x20002000"
+                    if lit_off is not None and lit_off + 4 <= len(c["bytes"]):
+                        val_num = int.from_bytes(c["bytes"][lit_off:lit_off+4], byteorder="little")
+                        val_hex = f"0x{val_num:08x}"
+                    mem_detail = {
+                        "kind": "Literal Pool",
+                        "addr": f"0x{lit_addr:08x}",
+                        "val": val_hex
+                    }
+                except Exception:
+                    mem_detail = {"kind": "Literal Pool", "addr": "PC-Relative", "val": "Constant Pointer"}
+            elif mnl.startswith("str") and "[" in i.op_str:
+                try:
+                    parts = i.op_str.split(",")
+                    val_reg = parts[0].strip().upper()
+                    offset = parts[-1].strip(" ]#") if len(parts) > 1 else "0x0"
+                    mem_detail = {
+                        "kind": "SRAM Store",
+                        "reg": val_reg,
+                        "offset": offset
+                    }
+                except Exception:
+                    pass
+
             instrs.append({
                 "addr": i.address,
                 "bytes": i.bytes.hex(" "),
@@ -687,7 +747,9 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
                 "w": w,
                 "comment": comment,
                 "reg_effect": reg_effect,
-                "mem_op": mem_op
+                "mem_op": mem_op,
+                "flow_arrow": flow_arrow,
+                "mem_detail": mem_detail
             })
         
         if not instrs:

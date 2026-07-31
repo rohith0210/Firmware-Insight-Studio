@@ -214,6 +214,8 @@ export default function InvestigationWorkspace({
       comment?: string;
       reg_effect?: string;
       mem_op?: string;
+      flow_arrow?: string;
+      mem_detail?: { kind: string; addr?: string; val?: string; reg?: string; offset?: string };
       target_meta?: { name: string; addr: string; resolved: boolean };
     }[];
     symbols_meta?: Record<
@@ -230,6 +232,11 @@ export default function InvestigationWorkspace({
         calls: string[];
       }
     >;
+    error?: boolean;
+    reason?: string;
+    stage?: string;
+    possible_fix?: string;
+    message?: string;
   } | null>(null);
   const [loadingDisasm, setLoadingDisasm] = useState<boolean>(false);
 
@@ -608,19 +615,32 @@ export default function InvestigationWorkspace({
                             )}
                           </div>
 
-                          {/* EXPANDABLE INFERRED SEMANTIC BREAKDOWN */}
-                          {(ins.reg_effect || ins.mem_op) && (
-                            <div className="pl-28 pt-1 flex flex-wrap gap-4 text-[10px] border-t border-white/5">
+                          {/* INFERRED SEMANTIC BREAKDOWN & CONTROL FLOW ARROWS */}
+                          {(ins.reg_effect || ins.mem_op || ins.flow_arrow || ins.mem_detail) && (
+                            <div className="pl-28 pt-1 flex flex-wrap gap-4 text-[10px] border-t border-white/5 font-mono">
+                              {ins.flow_arrow && (
+                                <div className="text-amber-300 font-bold flex items-center gap-1">
+                                  <span>{ins.flow_arrow}</span>
+                                </div>
+                              )}
                               {ins.reg_effect && (
-                                <div className="text-cyan-300 font-bold flex items-center gap-1 font-mono">
-                                  <span className="text-gray-500">↓ Register Effect:</span>
+                                <div className="text-cyan-300 font-bold flex items-center gap-1">
+                                  <span className="text-gray-500">↓ Effect:</span>
                                   <span>{ins.reg_effect}</span>
                                 </div>
                               )}
                               {ins.mem_op && (
-                                <div className="text-emerald-300 font-bold flex items-center gap-1 font-mono">
-                                  <span className="text-gray-500">↓ Memory Operation:</span>
+                                <div className="text-emerald-300 font-bold flex items-center gap-1">
+                                  <span className="text-gray-500">↓ Mem Op:</span>
                                   <span>{ins.mem_op}</span>
+                                </div>
+                              )}
+                              {ins.mem_detail && (
+                                <div className="text-purple-300 font-bold flex items-center gap-1.5 bg-purple-950/30 border border-purple-500/30 px-2 py-0.5 rounded">
+                                  <span>📥 {ins.mem_detail.kind}:</span>
+                                  {ins.mem_detail.addr && <span className="text-amber-400">Addr {ins.mem_detail.addr}</span>}
+                                  {ins.mem_detail.val && <span className="text-emerald-400">Val {ins.mem_detail.val}</span>}
+                                  {ins.mem_detail.offset && <span className="text-cyan-300">Offset {ins.mem_detail.offset}</span>}
                                 </div>
                               )}
                             </div>
@@ -630,8 +650,29 @@ export default function InvestigationWorkspace({
                     })}
                   </div>
                 ) : (
-                  <div className="flex-1 flex items-center justify-center p-8 text-gray-400 mono text-xs">
-                    No disassembly instructions available for symbol '{activeSym?.name}'.
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#05080c] select-text">
+                    <div className="p-6 rounded-xl bg-black/60 border border-amber-500/40 max-w-lg space-y-3 shadow-2xl">
+                      <div className="text-amber-400 font-bold text-base flex items-center justify-center gap-2">
+                        <span>⚠️</span> Disassembly Pipeline Diagnostic
+                      </div>
+                      <div className="text-gray-200 text-xs font-mono">
+                        {disasmData?.message || `Capstone failed to decode instructions for symbol '${activeSym?.name}'.`}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px] font-mono pt-2 border-t border-white/10 text-left">
+                        <div className="bg-white/5 p-2 rounded">
+                          <span className="text-gray-400 block text-[10px] uppercase">Failure Reason:</span>
+                          <span className="text-rose-400 font-bold">{disasmData?.reason || "DISASM_DECODE_FAILED"}</span>
+                        </div>
+                        <div className="bg-white/5 p-2 rounded">
+                          <span className="text-gray-400 block text-[10px] uppercase">Pipeline Stage:</span>
+                          <span className="text-cyan-300 font-bold">{disasmData?.stage || "Capstone Engine Decoder"}</span>
+                        </div>
+                      </div>
+                      <div className="bg-purple-950/30 border border-purple-500/30 p-2.5 rounded text-left text-[11px] font-mono">
+                        <span className="text-purple-300 font-bold block text-[10px] uppercase">Suggested Technical Fix:</span>
+                        <span className="text-gray-300">{disasmData?.possible_fix || "Ensure symbol section is executable (.text) and target architecture matches Capstone configuration."}</span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1027,39 +1068,58 @@ export default function InvestigationWorkspace({
             <div className="font-bold text-[var(--fg)] text-sm truncate">{activeSym?.name}</div>
             <div className="flex justify-between text-[11px] pt-1 border-t border-white/5">
               <span className="text-[var(--mut)]">Address:</span>
-              <span className="text-[var(--a)] font-bold">0x{(symDetails?.value || 0x080001f8).toString(16)}</span>
+              <span className="text-[var(--a)] font-bold">
+                {symDetails && "value" in symDetails && symDetails.value !== undefined
+                  ? `0x${(symDetails.value & ~1).toString(16).padStart(8, "0")}`
+                  : "Address Unknown"}
+              </span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Size:</span>
-              <span className="text-gray-200 font-bold">{activeSym?.size} Bytes</span>
+              <span className="text-gray-200 font-bold">{activeSym?.size || 0} Bytes</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Object File:</span>
-              <span className="text-[var(--b)] font-bold">{objectFile}</span>
+              <span className="text-[var(--b)] font-bold">
+                {objectFile && !objectFile.startsWith("#") && !objectFile.startsWith("0x") ? objectFile : "Module Unknown"}
+              </span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Section:</span>
-              <span className="text-[var(--a)] font-bold">{activeSym?.secName}</span>
+              <span className="text-[var(--a)] font-bold">{activeSym?.secName || ".text"}</span>
             </div>
           </div>
 
-          <div className="p-2.5 rounded bg-black/30 border border-[var(--line)] space-y-1.5 select-text">
-            <div className="text-[10px] text-[var(--mut)] uppercase font-bold">Verified Debug & Source Status</div>
-            <div className="flex justify-between text-[11px]">
-              <span className="text-[var(--mut)]">DWARF Status:</span>
-              <span className={`font-bold ${hasDebugInfo ? "text-emerald-400" : "text-amber-400"}`}>
-                {hasDebugInfo ? "✓ Present" : "✗ Stripped"}
-              </span>
+          {/* DIAGNOSTIC METADATA STATUS CARDS */}
+          <div className="p-2.5 rounded bg-black/30 border border-[var(--line)] space-y-2 select-text">
+            <div className="text-[10px] text-[var(--mut)] uppercase font-bold">Verified Metadata Diagnostics</div>
+            
+            <div className="space-y-1">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-[var(--mut)]">DWARF Status:</span>
+                <span className={`font-bold ${hasDebugInfo ? "text-emerald-400" : "text-amber-400"}`}>
+                  {hasDebugInfo ? "✓ Present" : "✗ Stripped"}
+                </span>
+              </div>
+              {!hasDebugInfo && (
+                <div className="text-[10px] text-amber-500/80 italic pl-2 border-l border-amber-500/30">
+                  Reason: Debug symbols missing. Compile firmware with -g to enable source line mapping.
+                </div>
+              )}
             </div>
-            <div className="flex justify-between text-[11px]">
-              <span className="text-[var(--mut)]">Source Status:</span>
-              <span className={`font-bold ${sourceData?.found ? "text-emerald-400" : "text-amber-400"}`}>
-                {sourceData?.found ? "✓ Verified Source" : "✗ Source Unavailable"}
-              </span>
-            </div>
-            <div className="flex justify-between text-[11px]">
-              <span className="text-[var(--mut)]">Compiler:</span>
-              <span className="text-gray-300 font-bold">{hasDebugInfo ? "GNU GCC (Embedded)" : "Unknown"}</span>
+
+            <div className="space-y-1 pt-1 border-t border-white/5">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-[var(--mut)]">Source Status:</span>
+                <span className={`font-bold ${sourceData?.found ? "text-emerald-400" : "text-amber-400"}`}>
+                  {sourceData?.found ? "✓ Verified Source" : "✗ Source Unavailable"}
+                </span>
+              </div>
+              {!sourceData?.found && (
+                <div className="text-[10px] text-amber-500/80 italic pl-2 border-l border-amber-500/30">
+                  Reason: {sourceData?.reason === "SOURCE_UNAVAILABLE" ? "DWARF stripped or project ZIP source archive missing." : "Source code payload missing."}
+                </div>
+              )}
             </div>
           </div>
 
