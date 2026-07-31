@@ -55,6 +55,8 @@ class ParseResult(BaseModel):
     objects: List[Dict[str, Any]]; isrs: List[Dict[str, Any]]
     peripherals: List[Dict[str, Any]]; build_config: Dict[str, Any]
     has_debug_symbols: bool = False
+    source_available: bool = False
+    capabilities: Dict[str, bool] = None
 
 _KEEP_EXACT = {"main", "_start", "_exit", "Reset_Handler", "reset_handler", "SystemInit"}
 _KEEP_RE = re.compile(r"(IRQHandler|Handler$|_isr$|_ISR$|_vector$|_Vector$)")
@@ -236,17 +238,69 @@ def parse_elf(path: str) -> dict:
 
 @app.post("/api/upload", response_model=ParseResult)
 async def upload_firmware(file: UploadFile = File(...)):
-    allowed = (".elf", ".o", ".out", ".axf", ".bin")
+    allowed = (".elf", ".o", ".out", ".axf", ".bin", ".zip")
     if not file.filename.lower().endswith(allowed): raise HTTPException(400, f"Only {allowed} supported")
     content = await file.read()
+
+    elf_bytes = None
+    source_files: Dict[str, str] = {}
+    filename = file.filename
+
+    if file.filename.lower().endswith(".zip"):
+        import zipfile, io
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                elf_entry = None
+                for member in z.namelist():
+                    lower_name = member.lower()
+                    if lower_name.endswith((".elf", ".axf", ".bin", ".o", ".out")):
+                        elf_entry = member
+                        break
+                    elif (not elf_entry) and not member.endswith("/") and not lower_name.endswith((".c", ".h", ".cpp", ".hpp", ".txt", ".md", ".json")):
+                        elf_entry = member
+
+                if not elf_entry:
+                    raise HTTPException(400, "ZIP archive must contain an ELF binary (.elf, .axf, .bin, .o, .out)")
+
+                elf_bytes = z.read(elf_entry)
+                filename = os.path.basename(elf_entry)
+
+                for member in z.namelist():
+                    if member.endswith("/"): continue
+                    lower_name = member.lower()
+                    if lower_name.endswith((".c", ".h", ".cpp", ".hpp", ".s", ".asm")):
+                        try:
+                            text = z.read(member).decode("utf-8", "ignore")
+                            source_files[member] = text
+                            source_files[os.path.basename(member)] = text
+                        except Exception:
+                            pass
+        except zipfile.BadZipFile:
+            raise HTTPException(400, "Invalid ZIP archive file.")
+    else:
+        elf_bytes = content
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".elf") as tmp:
-        tmp.write(content); tmp_path = tmp.name
+        tmp.write(elf_bytes); tmp_path = tmp.name
     try:
-        r = parse_elf(tmp_path); r["filename"] = file.filename
+        r = parse_elf(tmp_path); r["filename"] = filename
         checksum = r["checksum"]
+        if checksum in _CACHE:
+            _CACHE[checksum]["source_files"] = source_files
+
+        source_available = bool(source_files)
+        capabilities = {
+            "source_available": source_available,
+            "assembly_available": True,
+            "decompiler_available": True,
+            "hex_available": True
+        }
+        r["source_available"] = source_available
+        r["capabilities"] = capabilities
+
         disk_path = os.path.join(CACHE_DIR, f"{checksum}.elf")
         with open(disk_path, "wb") as f:
-            f.write(content)
+            f.write(elf_bytes)
         return r
     except Exception as e:
         raise HTTPException(500, f"Parse error: {e}")
@@ -528,12 +582,12 @@ def get_source(checksum: str = Query(default=""), name: str = Query(default="mai
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(c["bytes"]); tmp_path = tmp.name
 
-    try:
-        found_path = None
-        fname = f"{name}.c"
-        line = 1
-        comp_dir = ""
+    fname = f"{name}.c"
+    line = 1
+    comp_dir = ""
+    dwarf_found = False
 
+    try:
         with open(tmp_path, "rb") as f:
             elf = ELFFile(f)
             if elf.has_dwarf_info():
@@ -571,62 +625,63 @@ def get_source(checksum: str = Query(default=""), name: str = Query(default="mai
                     fname = matched_sym_info['filename']
                     line = matched_sym_info['line']
                     comp_dir = matched_sym_info['comp_dir']
-                    
-                    search_bases = [comp_dir, "/home/rohith_0210/STM32_Workspace", "/home/rohith_0210/Firmware-Insight-Studio", os.getcwd()]
-                    for sbase in search_bases:
-                        if sbase and os.path.exists(sbase):
-                            for root_dir, _, filenames in os.walk(sbase):
-                                if fname in filenames:
-                                    found_path = os.path.join(root_dir, fname)
-                                    break
-                            if found_path: break
-
-        if found_path and os.path.exists(found_path):
-            with open(found_path, "r", encoding="utf-8", errors="ignore") as sf:
-                raw_lines = sf.readlines()
-            lines = [{"num": idx + 1, "text": l.rstrip("\r\n")} for idx, l in enumerate(raw_lines)]
-            return {
-                "found": True,
-                "filename": fname,
-                "path": found_path,
-                "decl_line": line,
-                "lines": lines,
-                "reconstructed": False
-            }
-
-        # Fallback: Irrespective of local filesystem, generate decompiled pseudo-C source code
-        decomp = get_decompiler(checksum=checksum, name=name)
-        pseudocode = decomp.get("pseudocode", []) if isinstance(decomp, dict) else []
-        if not pseudocode:
-            pseudocode = [
-                f"/* Reconstructed Function Stub for {name}() */",
-                f"void {name}(void) {{",
-                "    // System subroutine entry point",
-                "}"
-            ]
-        lines = [{"num": idx + 1, "text": l} for idx, l in enumerate(pseudocode)]
-        return {
-            "found": True,
-            "filename": f"{fname} (Decompiled)",
-            "path": f"Generated Pseudo-C from Binary ({name})",
-            "decl_line": 3,
-            "lines": lines,
-            "reconstructed": True
-        }
+                    dwarf_found = True
     except Exception:
-        decomp = get_decompiler(checksum=checksum, name=name)
-        pseudocode = decomp.get("pseudocode", []) if isinstance(decomp, dict) else []
-        lines = [{"num": idx + 1, "text": l} for idx, l in enumerate(pseudocode)]
-        return {
-            "found": True,
-            "filename": f"{name}.c (Decompiled)",
-            "path": f"Generated Pseudo-C from Binary ({name})",
-            "decl_line": 3,
-            "lines": lines,
-            "reconstructed": True
-        }
+        pass
     finally:
         if os.path.exists(tmp_path): os.unlink(tmp_path)
+
+    # Check uploaded source index (no filesystem os.path.exists assumption)
+    source_index = c.get("source_files", {})
+    matched_content = None
+    clean_fname = os.path.basename(fname)
+
+    if fname in source_index:
+        matched_content = source_index[fname]
+    elif clean_fname in source_index:
+        matched_content = source_index[clean_fname]
+    else:
+        for k, v in source_index.items():
+            if k.endswith(clean_fname):
+                matched_content = v
+                break
+
+    if matched_content is not None:
+        raw_lines = matched_content.splitlines()
+        lines = [{"num": idx + 1, "text": l} for idx, l in enumerate(raw_lines)]
+        return {
+            "found": True,
+            "filename": clean_fname,
+            "path": f"Uploaded Project Archive: {clean_fname}",
+            "decl_line": line,
+            "lines": lines,
+            "reconstructed": False,
+            "source_status": "Verified Uploaded Source",
+            "capabilities": {
+                "source_available": True,
+                "assembly_available": True,
+                "decompiler_available": True,
+                "hex_available": True
+            }
+        }
+
+    return {
+        "found": False,
+        "reason": "SOURCE_NOT_IN_UPLOADED_PAYLOAD",
+        "explanation": f"The firmware contains DWARF debug metadata referencing '{fname}' (compilation directory '{comp_dir or 'External Build Dir'}'), but original source code files were not uploaded in the project ZIP payload.",
+        "dwarf_info": {
+            "filename": fname,
+            "comp_dir": comp_dir or "External Build Dir",
+            "decl_line": line,
+            "dwarf_present": dwarf_found
+        },
+        "capabilities": {
+            "source_available": False,
+            "assembly_available": True,
+            "decompiler_available": True,
+            "hex_available": True
+        }
+    }
 
 @app.get("/api/decompiler")
 @app.get("/api/pseudocode")

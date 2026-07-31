@@ -108,38 +108,15 @@ export default function InvestigationWorkspace({
     fetch(url)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (data && data.found && data.lines && data.lines.length > 0) {
+        if (data) {
           setSourceData(data);
-          setLoadingSource(false);
         } else {
-          const decompUrl = checksum
-            ? `${apiBase}/api/decompiler?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
-            : `${apiBase}/api/decompiler?name=${encodeURIComponent(activeSym.name)}`;
-
-          fetch(decompUrl)
-            .then(r => (r.ok ? r.json() : null))
-            .then(d => {
-              if (d && d.pseudocode && d.pseudocode.length > 0) {
-                setSourceData({
-                  found: true,
-                  filename: `${activeSym.name}.c (Decompiled)`,
-                  path: `Reconstructed AST Pseudocode`,
-                  decl_line: 1,
-                  lines: d.pseudocode.map((l: string, idx: number) => ({ num: idx + 1, text: l }))
-                });
-              } else {
-                setSourceData(data || { found: false, reason: "DWARF_MISSING" });
-              }
-              setLoadingSource(false);
-            })
-            .catch(() => {
-              setSourceData(data || { found: false, reason: "DWARF_MISSING" });
-              setLoadingSource(false);
-            });
+          setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
         }
+        setLoadingSource(false);
       })
       .catch(() => {
-        setSourceData({ found: false, reason: "DWARF_MISSING" });
+        setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
         setLoadingSource(false);
       });
   }, [activeSym?.name, result?.checksum]);
@@ -779,7 +756,7 @@ export default function InvestigationWorkspace({
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Source Status:</span>
               <span className={`font-bold ${sourceData?.found ? "text-emerald-400" : "text-amber-400"}`}>
-                {sourceData?.found ? "✓ Verified Local" : "✗ Unavailable"}
+                {sourceData?.found ? "✓ Verified Uploaded Source" : "✗ Unavailable (ZIP Payload)"}
               </span>
             </div>
             <div className="flex justify-between text-[11px]">
