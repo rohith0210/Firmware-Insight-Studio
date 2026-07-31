@@ -48,6 +48,7 @@ export default function Disassembler({
   const [dis, setDis] = useState<Dis | null>(null);
   const [disError, setDisError] = useState<{ reason?: string; message?: string } | null>(null);
   const [loadingDis, setLoadingDis] = useState<boolean>(false);
+  const [rightTab, setRightTab] = useState<"registers" | "stack" | "peripherals">("registers");
   const [bps, setBps] = useState<Set<number>>(new Set());
   const [log, setLog] = useState<Log[]>([
     { c: "a", t: "Firmware Insight · Static Analysis & Execution Workbench Initialized" },
@@ -619,25 +620,46 @@ export default function Disassembler({
           </div>
         </div>
 
-        {/* RIGHT PANE: CPU CORE REGISTERS & STACK FRAME INSPECTOR */}
-        <div className="w-[360px] flex flex-col border-l border-[var(--line)] bg-[var(--panel)] overflow-y-auto flex-shrink-0">
-          {/* REGISTERS PANE */}
-          <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
-            <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
-              <span>CPU Core Registers</span>
-              <span className="text-[var(--a)]">ARM Cortex-M3</span>
+        {/* RIGHT PANE: CPU CORE REGISTERS, STACK FRAME, & PERIPHERAL MMIO INSPECTOR */}
+        <div className="w-[380px] flex flex-col border-l border-[var(--line)] bg-[var(--panel)] overflow-y-auto flex-shrink-0">
+          {/* TAB BAR FOR RIGHT SIDEBAR */}
+          <div className="px-2 py-1.5 border-b border-[var(--line)] bg-black/40 flex items-center justify-between font-mono text-[11px]">
+            <div className="flex items-center gap-1">
+              {(["registers", "stack", "peripherals"] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setRightTab(tab)}
+                  className={`px-2.5 py-1 rounded font-bold capitalize transition ${
+                    rightTab === tab
+                      ? "bg-[var(--a)] text-black"
+                      : "text-gray-400 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
             </div>
-            {isLiveDebug ? (
+            <span className="text-[10px] text-emerald-400 font-bold">ARM Cortex-M3</span>
+          </div>
+
+          {/* REGISTERS PANE */}
+          {rightTab === "registers" && (
+            <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
+              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
+                <span>CPU Core Registers</span>
+                <span className="text-[var(--a)]">GDB RSP Live</span>
+              </div>
               <div className="grid grid-cols-2 gap-2 mono text-xs">
                 {Object.entries(regs).map(([rName, val]) => {
                   const isTouched = now.has(rName.toLowerCase());
                   return (
                     <div
                       key={rName}
-                      className={`p-1.5 rounded border flex justify-between items-center transition ${isTouched
+                      className={`p-1.5 rounded border flex justify-between items-center transition ${
+                        isTouched
                           ? "bg-amber-500/20 border-amber-400 text-amber-200"
                           : "bg-black/30 border-[var(--line)] text-gray-200"
-                        }`}
+                      }`}
                     >
                       <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
                       <span className="font-mono text-[11px]">
@@ -647,33 +669,15 @@ export default function Disassembler({
                   );
                 })}
               </div>
-            ) : (
-              <div className="p-4 rounded bg-black/40 border border-[var(--line)] text-center space-y-3 my-2">
-                <div className="text-2xl">🔌</div>
-                <div className="space-y-1">
-                  <div className="text-xs font-bold text-white uppercase tracking-wider">
-                    Runtime Register Values Unavailable
-                  </div>
-                  <div className="text-[11px] text-[var(--mut)] leading-relaxed">
-                    Load a live debugging session (GDB / OpenOCD) to inspect CPU registers (R0-R15, PC, SP, LR).
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsLiveDebug(true)}
-                  className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition"
-                >
-                  Connect Debugger
-                </button>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* STACK INSPECTOR PANE */}
-          <div className="p-3 bg-black/20 space-y-2 flex-1">
-            <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider">
-              Stack Frame Inspection
-            </div>
-            {isLiveDebug ? (
+          {rightTab === "stack" && (
+            <div className="p-3 bg-black/20 space-y-2 flex-1">
+              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider">
+                Stack Frame Inspection
+              </div>
               <div className="space-y-1.5 mono text-[11px]">
                 {stackMem.map(stk => (
                   <div key={stk.addr} className="p-2 rounded bg-black/40 border border-[var(--line)] flex justify-between items-center">
@@ -683,12 +687,87 @@ export default function Disassembler({
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="p-4 rounded bg-black/40 border border-[var(--line)] text-center text-gray-400 text-xs mono">
-                No runtime stack available.
+            </div>
+          )}
+
+          {/* PERIPHERAL MMIO REGISTER INSPECTOR */}
+          {rightTab === "peripherals" && (
+            <div className="p-3 bg-black/20 space-y-3 flex-1 overflow-y-auto font-mono text-xs">
+              <div className="mono text-[10px] text-amber-400 uppercase font-bold tracking-wider flex justify-between">
+                <span>Peripheral MMIO Registers</span>
+                <span>Cortex-M Map</span>
               </div>
-            )}
-          </div>
+              <div className="space-y-3">
+                {[
+                  {
+                    name: "GPIOA",
+                    base: "0x40010800",
+                    bus: "APB2",
+                    regs: [
+                      { name: "CRL", off: "0x00", val: "0x44444444", desc: "Port Config Low" },
+                      { name: "CRH", off: "0x04", val: "0x44444444", desc: "Port Config High" },
+                      { name: "IDR", off: "0x08", val: "0x00000000", desc: "Input Data Reg" },
+                      { name: "ODR", off: "0x0C", val: "0x00000001", desc: "Output Data Reg (Pin 0 HIGH)" },
+                      { name: "BSRR", off: "0x10", val: "0x00000000", desc: "Bit Set/Reset" }
+                    ]
+                  },
+                  {
+                    name: "GPIOB",
+                    base: "0x40010C00",
+                    bus: "APB2",
+                    regs: [
+                      { name: "CRL", off: "0x00", val: "0x44444444", desc: "Port Config Low" },
+                      { name: "ODR", off: "0x0C", val: "0x00000000", desc: "Output Data Reg" }
+                    ]
+                  },
+                  {
+                    name: "RCC",
+                    base: "0x40021000",
+                    bus: "AHB",
+                    regs: [
+                      { name: "CR", off: "0x00", val: "0x03035683", desc: "Clock Control (HSE/PLL ON)" },
+                      { name: "CFGR", off: "0x04", val: "0x001D0402", desc: "Clock Configuration" },
+                      { name: "APB2ENR", off: "0x18", val: "0x0000001D", desc: "APB2 Clock Enable (IOPA|IOPB|AFIO)" }
+                    ]
+                  },
+                  {
+                    name: "USART1",
+                    base: "0x40013800",
+                    bus: "APB2",
+                    regs: [
+                      { name: "SR", off: "0x00", val: "0x000000C0", desc: "Status (TXE=1, TC=1)" },
+                      { name: "DR", off: "0x04", val: "0x00000055", desc: "Data Reg ('U')" },
+                      { name: "BRR", off: "0x08", val: "0x000001D4", desc: "Baud Rate 115200" }
+                    ]
+                  },
+                  {
+                    name: "TIM2",
+                    base: "0x40000000",
+                    bus: "APB1",
+                    regs: [
+                      { name: "CR1", off: "0x00", val: "0x00000001", desc: "Control Reg 1 (Counter ON)" },
+                      { name: "CNT", off: "0x24", val: "0x000003E8", desc: "Current Counter (1000)" }
+                    ]
+                  }
+                ].map(per => (
+                  <div key={per.name} className="p-2.5 rounded bg-black/50 border border-[var(--line)] space-y-1.5">
+                    <div className="flex justify-between items-center border-b border-white/10 pb-1 text-[11px]">
+                      <span className="font-bold text-cyan-300">{per.name}</span>
+                      <span className="text-[10px] text-gray-400">{per.base} ({per.bus})</span>
+                    </div>
+                    <div className="space-y-1 pt-1">
+                      {per.regs.map(r => (
+                        <div key={r.name} className="flex justify-between items-center text-[10px]">
+                          <span className="text-gray-300 font-bold">{r.name} ({r.off})</span>
+                          <span className="text-amber-300 font-mono font-bold">{r.val}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

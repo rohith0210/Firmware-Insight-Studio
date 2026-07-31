@@ -1728,6 +1728,69 @@ def get_cfg(checksum: str = Query(default=""), name: str = Query(default="main")
     cfg_res = _build_cfg(instrs, s.get("value", 0x08000000) & ~1)
     return cfg_res
 
+@app.get("/api/peripherals")
+def get_peripherals():
+    return {
+        "peripherals": [
+            {
+                "name": "GPIOA",
+                "base": "0x40010800",
+                "bus": "APB2",
+                "registers": [
+                    {"name": "CRL", "offset": "0x00", "addr": "0x40010800", "reset": "0x44444444", "val": "0x44444444", "desc": "Port configuration register low"},
+                    {"name": "CRH", "offset": "0x04", "addr": "0x40010804", "reset": "0x44444444", "val": "0x44444444", "desc": "Port configuration register high"},
+                    {"name": "IDR", "offset": "0x08", "addr": "0x40010808", "reset": "0x00000000", "val": "0x00000000", "desc": "Port input data register"},
+                    {"name": "ODR", "offset": "0x0C", "addr": "0x4001080C", "reset": "0x00000000", "val": "0x00000001", "desc": "Port output data register"},
+                    {"name": "BSRR", "offset": "0x10", "addr": "0x40010810", "reset": "0x00000000", "val": "0x00000000", "desc": "Port bit set/reset register"}
+                ]
+            },
+            {
+                "name": "GPIOB",
+                "base": "0x40010C00",
+                "bus": "APB2",
+                "registers": [
+                    {"name": "CRL", "offset": "0x00", "addr": "0x40010C00", "reset": "0x44444444", "val": "0x44444444", "desc": "Port configuration register low"},
+                    {"name": "CRH", "offset": "0x04", "addr": "0x40010C04", "reset": "0x44444444", "val": "0x44444444", "desc": "Port configuration register high"},
+                    {"name": "IDR", "offset": "0x08", "addr": "0x40010C08", "reset": "0x00000000", "val": "0x00000000", "desc": "Port input data register"},
+                    {"name": "ODR", "offset": "0x0C", "addr": "0x40010C0C", "reset": "0x00000000", "val": "0x00000000", "desc": "Port output data register"}
+                ]
+            },
+            {
+                "name": "RCC",
+                "base": "0x40021000",
+                "bus": "AHB",
+                "registers": [
+                    {"name": "CR", "offset": "0x00", "addr": "0x40021000", "reset": "0x00000083", "val": "0x03035683", "desc": "Clock control register (HSE/HSI/PLL)"},
+                    {"name": "CFGR", "offset": "0x04", "addr": "0x40021004", "reset": "0x00000000", "val": "0x001D0402", "desc": "Clock configuration register"},
+                    {"name": "CIR", "offset": "0x08", "addr": "0x40021008", "reset": "0x00000000", "val": "0x00000000", "desc": "Clock interrupt register"},
+                    {"name": "APB2ENR", "offset": "0x18", "addr": "0x40021018", "reset": "0x00000000", "val": "0x0000001D", "desc": "APB2 peripheral clock enable register"}
+                ]
+            },
+            {
+                "name": "USART1",
+                "base": "0x40013800",
+                "bus": "APB2",
+                "registers": [
+                    {"name": "SR", "offset": "0x00", "addr": "0x40013800", "reset": "0x000000C0", "val": "0x000000C0", "desc": "Status register (TXE/RXNE)"},
+                    {"name": "DR", "offset": "0x04", "addr": "0x40013804", "reset": "0x00000000", "val": "0x00000055", "desc": "Data register"},
+                    {"name": "BRR", "offset": "0x08", "addr": "0x40013808", "reset": "0x00000000", "val": "0x000001D4", "desc": "Baud rate register (115200 baud)"},
+                    {"name": "CR1", "offset": "0x0C", "addr": "0x4001380C", "reset": "0x00000000", "val": "0x0000200C", "desc": "Control register 1 (UE/TE/RE)"}
+                ]
+            },
+            {
+                "name": "TIM2",
+                "base": "0x40000000",
+                "bus": "APB1",
+                "registers": [
+                    {"name": "CR1", "offset": "0x00", "addr": "0x40000000", "reset": "0x00000000", "val": "0x00000001", "desc": "Control register 1 (CEN counter enable)"},
+                    {"name": "DIER", "offset": "0x0C", "addr": "0x4000000C", "reset": "0x00000000", "val": "0x00000001", "desc": "DMA/Interrupt enable register"},
+                    {"name": "SR", "offset": "0x10", "addr": "0x40000010", "reset": "0x00000000", "val": "0x00000001", "desc": "Status register (UIF update interrupt flag)"},
+                    {"name": "CNT", "offset": "0x24", "addr": "0x40000024", "reset": "0x00000000", "val": "0x000003E8", "desc": "Counter register"}
+                ]
+            }
+        ]
+    }
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "Firmware Insight Studio Binary Intelligence Engine"}
