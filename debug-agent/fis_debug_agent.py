@@ -43,6 +43,15 @@ class GdbRspClient:
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self.connected = True
+            # Send GDB RSP initial handshake '+' and '$qSupported' sequence expected by OpenOCD
+            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
+            await self.writer.drain()
+            try:
+                _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
+                self.writer.write(b"+")
+                await self.writer.drain()
+            except Exception:
+                pass
             print(f"[+] Connected to GDB Server at {self.host}:{self.port}")
             return True
         except Exception as e:
