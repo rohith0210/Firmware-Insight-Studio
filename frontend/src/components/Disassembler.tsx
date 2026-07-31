@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
 import { getApiBaseUrl } from "../apiConfig";
+import HardwareSetupModal from "./HardwareSetupModal";
 
 type Instr = { addr: number; bytes: string; mn: string; op: string; t: string[]; w: string[] };
 type Dis = {
@@ -979,69 +980,12 @@ export default function Disassembler({
         </form>
       </div>
 
-      {/* HARDWARE DISCONNECTED SETUP MODAL */}
-      {showAgentModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0b1017] border border-amber-500/40 rounded-lg max-w-lg w-full p-6 shadow-2xl mono text-xs">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-                <span>⚠️</span>
-                <span>PHYSICAL HARDWARE NOT CONNECTED</span>
-              </div>
-              <button
-                onClick={() => setShowAgentModal(false)}
-                className="text-gray-400 hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-gray-300 mb-4 leading-relaxed">
-              Cannot enter Live Debug Mode because no physical target board or Local Debug Agent was detected on <code className="text-amber-300">ws://127.0.0.1:9001</code>.
-            </p>
-
-            <div className="bg-black/60 border border-white/10 rounded p-4 mb-5 space-y-2.5 text-gray-300">
-              <div className="font-bold text-emerald-400 text-[11px] uppercase tracking-wider mb-2">
-                Steps to connect physical target board:
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 font-bold">1.</span>
-                <span>Connect your <strong>ST-Link V2/V3</strong> debug probe to your <strong>STM32 target board</strong> via USB.</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 font-bold">2.</span>
-                <span>Start OpenOCD (GDB Server port 3333):<br />
-                  <code className="text-cyan-300 text-[11px] bg-black/80 px-1.5 py-0.5 rounded border border-white/10 mt-1 inline-block">openocd -f interface/stlink.cfg -f target/stm32f1x.cfg</code>
-                </span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 font-bold">3.</span>
-                <span>Run the Local Debug Agent:<br />
-                  <code className="text-cyan-300 text-[11px] bg-black/80 px-1.5 py-0.5 rounded border border-white/10 mt-1 inline-block">python3 debug-agent/fis_debug_agent.py</code>
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowAgentModal(false)}
-                className="px-4 py-2 rounded bg-white/10 text-gray-300 hover:bg-white/20 font-bold transition"
-              >
-                Continue in Static Mode
-              </button>
-              <button
-                onClick={() => {
-                  setShowAgentModal(false);
-                  connectLocalAgent();
-                }}
-                className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center gap-1.5 shadow-lg"
-              >
-                <span>🔄</span> Retry Connection
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* HARDWARE SETUP & DIAGNOSTICS GUIDE MODAL */}
+      <HardwareSetupModal
+        isOpen={showAgentModal}
+        onClose={() => setShowAgentModal(false)}
+        onConnected={connectLocalAgent}
+      />
     </div>
   );
 }

@@ -173,39 +173,167 @@ Disassembly decoding and register schema attribution support the following targe
 
 ## 🏗️ Technical Architecture
 
-```mermaid
-flowchart LR
-
-    A["🖥️ React + Vite + TypeScript<br/>Frontend Workbench"]
-    B["⚡ FastAPI Backend"]
-    C["📦 Analysis Engine"]
-    D["📄 pyelftools"]
-    E["🔍 Capstone"]
-    F["🧠 Firmware Intelligence"]
-    G["📊 Interactive UI"]
-
-    A -->|REST API| B
-
-    B --> C
-
-    C --> D
-    C --> E
-
-    D --> F
-    E --> F
-
-    F --> G
-
-    G --> A
+```text
+Browser ➔ Firmware Insight Studio ➔ WebSocket ➔ Local Debug Agent ➔ OpenOCD ➔ GDB Server ➔ ST-Link ➔ STM32
 ```
 
 ---
 
-## Installation & Setup
+## Welcome to Live Embedded Debugging
 
-### Prerequisites
-* Python 3.10 or higher
-* Node.js 18 or higher & npm
+Connect your **STM32 board** to **Firmware Insight Studio** using **ST-Link + OpenOCD + the Local Debug Agent**.
+
+> **Estimated setup time**: 2–3 minutes
+
+---
+
+### Step 1: Install Dependencies
+
+Verify prerequisites for your operating system:
+
+- ✓ **OpenOCD**
+- ✓ **Python 3.10+**
+- ✓ **ST-Link Drivers**
+- ✓ **websockets package**
+
+#### Linux
+```bash
+sudo apt install openocd
+python3 -m pip install websockets
+```
+
+#### Windows
+1. Download OpenOCD binaries & install ST-Link USB driver.
+2. Install Python 3.10+ from python.org.
+```cmd
+pip install websockets
+```
+
+#### macOS
+```bash
+brew install openocd
+pip3 install websockets
+```
+
+---
+
+### Step 2: Start the GDB Server
+
+OpenOCD acts as the communication bridge between your ST-Link programmer and the debugger:
+
+```bash
+openocd \
+  -f interface/stlink.cfg \
+  -f target/stm32f1x.cfg
+```
+
+#### Expected Output
+```text
+✓ ST-Link detected
+✓ Target voltage
+✓ Cortex-M3 detected
+✓ GDB Server listening on port 3333
+```
+
+---
+
+### Step 3: Start the Firmware Insight Local Debug Agent
+
+```bash
+python3 debug-agent/fis_debug_agent.py
+```
+
+#### Expected Output
+```text
+Firmware Insight Studio
+Local Debug Agent
+
+Listening
+ws://127.0.0.1:9001
+
+Waiting for Browser...
+```
+
+---
+
+### Step 4: Open Firmware Insight Studio & Connect
+
+Open the web app at:
+`https://firmware-insight-studio.vercel.app`
+
+Click:
+`Execution Workspace` ➔ `Connect Local Agent`
+
+The UI automatically executes the connection handshake:
+
+```text
+Searching for Local Agent...
+  ↓
+Agent Found
+  ↓
+Connecting to GDB...
+  ↓
+Connected
+  ↓
+STM32F103C8 detected
+  ↓
+Debugger Ready
+```
+
+---
+
+### 🟢 Connection Status Card & Auto Detect Diagnostics
+
+When connecting or running automated diagnostics via the **Run Diagnostics** button, the workspace monitors target health across all connection nodes:
+
+```text
+Connection Status
+
+🟢 Browser
+🟢 Local Agent
+🟢 OpenOCD
+🟢 GDB Server
+🟢 ST-Link
+🟢 STM32 Target
+
+Status: Debugger Ready
+```
+
+If any component in the hardware chain is missing, actionable guidance is presented:
+
+```text
+❌ OpenOCD not running
+Start OpenOCD and try again.
+```
+*or*
+```text
+❌ ST-Link not detected
+Check USB connection.
+```
+
+---
+
+### ⚡ Unlocked Debugging Features After Connection
+
+Once connected, full interactive hardware control is enabled across the workspace:
+
+- ✓ **CPU Registers**
+- ✓ **Live Program Counter**
+- ✓ **Stack Frames**
+- ✓ **Call Stack**
+- ✓ **Memory Viewer**
+- ✓ **Peripheral Registers**
+- ✓ **Breakpoints**
+- ✓ **Watchpoints**
+- ✓ **Source-level Debugging**
+- ✓ **Step Into**
+- ✓ **Step Over**
+- ✓ **Continue**
+- ✓ **Reset Target**
+
+---
+
+## Local Development & Setup
 
 ### Backend Setup
 
