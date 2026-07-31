@@ -209,6 +209,13 @@ export default function Disassembler({
       push("e", "[STATIC MODE] Step Over disabled in Static Analysis Mode. Connect a live debugger session.");
       return false;
     }
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
+      push("o", "⚡ [HARDWARE STEP] Issued Single Step (RSP 's') to OpenOCD/GDB server.");
+      return true;
+    }
+
     const currentDis = disRef.current;
     if (!currentDis || !currentDis.instructions || currentDis.instructions.length === 0) return false;
 
