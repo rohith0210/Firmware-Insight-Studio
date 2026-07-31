@@ -84,6 +84,12 @@ def _module_of(name: str) -> str:
     p = n.split("_")
     return p[0].upper() if len(p) > 1 and p[0] else "app"
 
+def get_module_prefix(name: str) -> str:
+    if not name or not isinstance(name, str):
+        return "driver"
+    parts = name.split("_")
+    return parts[1].lower() if len(parts) > 1 and parts[1] else "driver"
+
 def _e_flags_arm(f: int) -> List[str]:
     out = []
     eabi = (f >> 24) & 0xff
