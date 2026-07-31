@@ -82,10 +82,21 @@ export default function Disassembler({
   const disRef = useRef<Dis | null>(dis);
   const logRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
+  const activePcRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { pcRef.current = pc; }, [pc]);
   useEffect(() => { bpsRef.current = bps; }, [bps]);
   useEffect(() => { disRef.current = dis; }, [dis]);
+
+  // Auto-scroll disassembly view to active PC line
+  useEffect(() => {
+    if (pc !== null && activePcRef.current) {
+      activePcRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [pc]);
 
   const push = (c: Log["c"], t: string) => {
     setLog(prev => [...prev, { c, t }]);
@@ -350,6 +361,12 @@ export default function Disassembler({
           <button
             onClick={() => {
               setIsLiveDebug(true);
+              if (dis && dis.instructions && dis.instructions.length > 0) {
+                const entryAddr = dis.func.addr;
+                setPc(entryAddr);
+                pcRef.current = entryAddr;
+                setRegs(prev => ({ ...prev, PC: entryAddr }));
+              }
               push("a", "[LIVE DEBUG] Connected to GDB / OpenOCD debugger server target (ST-Link v2 @ 3333).");
             }}
             className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
@@ -503,11 +520,12 @@ export default function Disassembler({
             ) : dis && dis.instructions && dis.instructions.length > 0 ? (
               <div className="space-y-1 font-mono select-text">
                 {dis.instructions.map(ins => {
-                  const isCurrentPc = isLiveDebug && pc === ins.addr;
+                  const isCurrentPc = pc === ins.addr;
                   const isBp = bps.has(ins.addr);
                   return (
                     <div
                       key={ins.addr}
+                      ref={isCurrentPc ? activePcRef : null}
                       onClick={() => {
                         if (isLiveDebug) {
                           setPc(ins.addr);
@@ -515,7 +533,7 @@ export default function Disassembler({
                         }
                       }}
                       className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${isCurrentPc
-                          ? "bg-[rgba(51,214,194,0.25)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg"
+                          ? "bg-[rgba(51,214,194,0.35)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg shadow-[var(--a)]/20"
                           : "hover:bg-white/5 text-gray-300"
                         }`}
                     >
