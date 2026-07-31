@@ -92,7 +92,8 @@ const TL_KEY = "fis_timeline_v1";
 
 async function parseFile(file: File): Promise<ParseResult> {
   const form = new FormData(); form.append("file", file);
-  const res = await fetch("http://localhost:8000/api/upload", { method: "POST", body: form });
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+  const res = await fetch(`${API_URL}/api/upload`, { method: "POST", body: form });
   if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
   const data = await res.json();
   return {
@@ -266,7 +267,7 @@ export default function App() {
       case "overview":
         return <Overview result={result} device={device!} />;
       case "memory":
-        return <MemoryMap result={result} device={device!} onSelectRegion={() => {}} onNavigate={(target: any) => setView(target)} onDisassemble={handleOpenAssembly} />;
+        return <MemoryMap result={result} device={device!} onSelectRegion={() => { }} onNavigate={(target: any) => setView(target)} onDisassemble={handleOpenAssembly} />;
       case "layout":
         return <LinkerScript result={result} device={device!} />;
       case "sections":
@@ -400,15 +401,14 @@ export default function App() {
         {toasts.map(t => (
           <div
             key={t.id}
-            className={`pointer-events-auto px-4 py-2.5 rounded-lg border shadow-xl backdrop-blur-md mono text-[12px] flex items-center gap-2.5 transition-all duration-300 ${
-              t.type === "success"
+            className={`pointer-events-auto px-4 py-2.5 rounded-lg border shadow-xl backdrop-blur-md mono text-[12px] flex items-center gap-2.5 transition-all duration-300 ${t.type === "success"
                 ? "bg-[rgba(51,214,194,0.12)] border-[var(--a)] text-[#d6fff9]"
                 : t.type === "error"
-                ? "bg-[rgba(224,86,107,0.15)] border-[var(--danger)] text-[#ffcdd2]"
-                : t.type === "warning"
-                ? "bg-[rgba(240,168,48,0.15)] border-[var(--b)] text-[#ffecb3]"
-                : "bg-[rgba(10,16,26,0.92)] border-[var(--line2)] fg"
-            }`}
+                  ? "bg-[rgba(224,86,107,0.15)] border-[var(--danger)] text-[#ffcdd2]"
+                  : t.type === "warning"
+                    ? "bg-[rgba(240,168,48,0.15)] border-[var(--b)] text-[#ffecb3]"
+                    : "bg-[rgba(10,16,26,0.92)] border-[var(--line2)] fg"
+              }`}
             style={{ animation: "tmSlide .25s ease-out" }}
           >
             <span className="text-base">{t.type === "success" ? "✓" : t.type === "error" ? "⚠" : "⚡"}</span>

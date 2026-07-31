@@ -106,7 +106,7 @@ export default function Disassembler({
     setLoadingDis(true);
     setDisError(null);
     const checksum = result?.checksum;
-    const apiBase = window.location.port === "5173" ? "http://localhost:8000" : "";
+    const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
     const disUrl = checksum
       ? `${apiBase}/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(name)}`
       : `${apiBase}/api/disasm?name=${encodeURIComponent(name)}`;
@@ -411,11 +411,10 @@ export default function Disassembler({
                         setName(f);
                         setDropdownOpen(false);
                       }}
-                      className={`w-full text-left px-2 py-1 rounded transition text-[11px] flex justify-between items-center ${
-                        name === f
+                      className={`w-full text-left px-2 py-1 rounded transition text-[11px] flex justify-between items-center ${name === f
                           ? "bg-[var(--a-dim)] text-[var(--a)] font-bold border border-[var(--a-dim)]"
                           : "hover:bg-white/5 text-gray-300"
-                      }`}
+                        }`}
                     >
                       <span className="truncate">{f}</span>
                       <span className="text-[9px] text-[var(--mut)]">FUNC</span>
@@ -433,13 +432,12 @@ export default function Disassembler({
             onClick={handleRunToggle}
             disabled={!isLiveDebug}
             title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Run continuous execution"}
-            className={`mono text-xs px-3 py-1 rounded font-bold flex items-center gap-1.5 transition ${
-              !isLiveDebug
+            className={`mono text-xs px-3 py-1 rounded font-bold flex items-center gap-1.5 transition ${!isLiveDebug
                 ? "bg-black/30 border border-white/10 text-gray-500 cursor-not-allowed opacity-60"
                 : status === "running"
-                ? "bg-amber-500 text-black font-bold"
-                : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
-            }`}
+                  ? "bg-amber-500 text-black font-bold"
+                  : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
+              }`}
           >
             <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
           </button>
@@ -448,11 +446,10 @@ export default function Disassembler({
             onClick={handleStepOver}
             disabled={!isLiveDebug}
             title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Over (stay in current function listing)"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-              !isLiveDebug
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${!isLiveDebug
                 ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
                 : "bg-[var(--panel)] border-[var(--line)] hover:border-[var(--a-dim)] text-[var(--fg)]"
-            }`}
+              }`}
           >
             <span>↷ Step Over</span>
           </button>
@@ -461,11 +458,10 @@ export default function Disassembler({
             onClick={handleStepInto}
             disabled={!isLiveDebug}
             title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Step Into (follow function calls like HAL_Init)"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-              !isLiveDebug
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${!isLiveDebug
                 ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
                 : "bg-[rgba(51,214,194,0.15)] border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a-dim)] hover:text-black shadow-sm"
-            }`}
+              }`}
           >
             <span>⤶ Step Into</span>
           </button>
@@ -474,11 +470,10 @@ export default function Disassembler({
             onClick={handleReset}
             disabled={!isLiveDebug}
             title={!isLiveDebug ? "Runtime execution controls require an active debugger session" : "Reset Target PC"}
-            className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
-              !isLiveDebug
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition ${!isLiveDebug
                 ? "bg-black/30 border-white/10 text-gray-500 cursor-not-allowed opacity-60"
                 : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/10"
-            }`}
+              }`}
           >
             ↺ Reset Target
           </button>
@@ -519,11 +514,10 @@ export default function Disassembler({
                           pcRef.current = ins.addr;
                         }
                       }}
-                      className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${
-                        isCurrentPc
+                      className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${isCurrentPc
                           ? "bg-[rgba(51,214,194,0.25)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg"
                           : "hover:bg-white/5 text-gray-300"
-                      }`}
+                        }`}
                     >
                       {/* Breakpoint Gutter */}
                       <button
@@ -531,11 +525,10 @@ export default function Disassembler({
                           e.stopPropagation();
                           toggleBp(ins.addr);
                         }}
-                        className={`w-4 h-4 rounded-full border text-[9px] flex items-center justify-center font-bold transition ${
-                          isBp
+                        className={`w-4 h-4 rounded-full border text-[9px] flex items-center justify-center font-bold transition ${isBp
                             ? "bg-red-500 border-red-400 text-white shadow-lg shadow-red-500/50"
                             : "border-[var(--line)] hover:border-red-400 text-transparent"
-                        }`}
+                          }`}
                       >
                         ●
                       </button>
@@ -629,11 +622,10 @@ export default function Disassembler({
                   return (
                     <div
                       key={rName}
-                      className={`p-1.5 rounded border flex justify-between items-center transition ${
-                        isTouched
+                      className={`p-1.5 rounded border flex justify-between items-center transition ${isTouched
                           ? "bg-amber-500/20 border-amber-400 text-amber-200"
                           : "bg-black/30 border-[var(--line)] text-gray-200"
-                      }`}
+                        }`}
                     >
                       <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
                       <span className="font-mono text-[11px]">
@@ -708,9 +700,9 @@ export default function Disassembler({
               key={i}
               className={
                 l.c === "a" ? "text-[var(--a)] font-bold" :
-                l.c === "b" ? "text-amber-400 font-bold" :
-                l.c === "e" ? "text-red-400 font-bold" :
-                l.c === "m" ? "text-[var(--mut)] italic" : "text-gray-200"
+                  l.c === "b" ? "text-amber-400 font-bold" :
+                    l.c === "e" ? "text-red-400 font-bold" :
+                      l.c === "m" ? "text-[var(--mut)] italic" : "text-gray-200"
               }
             >
               {l.t}
