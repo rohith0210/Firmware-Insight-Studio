@@ -31,6 +31,7 @@ export default function InvestigationWorkspace({
   const [centerTab, setCenterTab] = useState<CenterTab>("assembly");
   const [bottomTab, setBottomTab] = useState<BottomTab>("Console");
   const [search, setSearch] = useState("");
+  const [hoveredReg, setHoveredReg] = useState<string | null>(null);
   const [hoveredSymbol, setHoveredSymbol] = useState<{
     name: string;
     addr: string;
@@ -154,13 +155,11 @@ export default function InvestigationWorkspace({
           setSourceData(data);
         } else {
           setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
-          if (centerTab === "source") setCenterTab("assembly");
         }
         setLoadingSource(false);
       })
       .catch(() => {
         setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
-        if (centerTab === "source") setCenterTab("assembly");
         setLoadingSource(false);
       });
   }, [activeSym?.name, result?.checksum]);
@@ -251,6 +250,8 @@ export default function InvestigationWorkspace({
       reg_effect?: string;
       mem_op?: string;
       flow_arrow?: string;
+      t?: string[];
+      w?: string[];
       mem_detail?: { kind: string; addr?: string; val?: string; reg?: string; offset?: string };
       target_meta?: { name: string; addr: string; resolved: boolean };
     }[];
@@ -593,8 +594,8 @@ export default function InvestigationWorkspace({
             {[
               { id: "assembly", label: "⚙ Assembly" },
               { id: "analysis", label: "📊 Analysis" },
+              { id: "source", label: "📜 Source" },
               { id: "hex", label: "▦ Hex" },
-              ...(sourceData?.found ? [{ id: "source", label: "📜 Source" }] : []),
             ].map(tab => (
               <button
                 key={tab.id}
@@ -669,14 +670,30 @@ export default function InvestigationWorkspace({
                         calls: []
                       } : null);
 
+                      // Register extraction for highlighting
+                      const insRegs = Array.from(new Set([
+                        ...(ins.t || []).map(r => r.toUpperCase()),
+                        ...(ins.w || []).map(r => r.toUpperCase()),
+                        ...((ins.raw_op || ins.op || "").match(/\b(r1[0-5]|r[0-9]|sp|lr|pc|xPSR)\b/gi) || []).map(r => r.toUpperCase())
+                      ]));
+
+                      const isRegHit = Boolean(hoveredReg && insRegs.includes(hoveredReg.toUpperCase()));
+
                       return (
-                        <div key={idx} className="p-2 rounded bg-black/40 border border-white/5 hover:border-white/20 transition space-y-1 font-mono group">
+                        <div
+                          key={idx}
+                          className={`p-2 rounded transition space-y-1 font-mono group border ${
+                            isRegHit
+                              ? "bg-cyan-950/40 border-cyan-400/80 shadow-[0_0_15px_rgba(6,182,212,0.35)] ring-1 ring-cyan-400/50"
+                              : "bg-black/40 border-white/5 hover:border-white/20"
+                          }`}
+                        >
                           {/* INSTRUCTION HEADER LINE */}
                           <div className="flex items-center gap-3">
                             <span className="w-24 text-amber-400 font-mono flex-shrink-0 text-[11px]">0x{ins.addr.toString(16).padStart(8, "0")}:</span>
                             <span className="w-16 font-bold text-[var(--a)] flex-shrink-0 text-[12px]">{ins.mn}</span>
                             <span
-                              className={`w-64 flex-shrink-0 truncate ${colorClass} ${isCall ? "cursor-pointer hover:underline" : ""}`}
+                              className={`w-56 flex-shrink-0 truncate ${colorClass} ${isCall ? "cursor-pointer hover:underline" : ""}`}
                               onMouseEnter={() => {
                                 if (isCall && symMeta) {
                                   setHoveredSymbol(symMeta);
@@ -691,8 +708,32 @@ export default function InvestigationWorkspace({
                             >
                               {ins.op}
                             </span>
+
+                            {/* INTERACTIVE REGISTER BADGES */}
+                            {insRegs.length > 0 && (
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {insRegs.map(reg => {
+                                  const isSel = hoveredReg === reg;
+                                  return (
+                                    <span
+                                      key={reg}
+                                      onMouseEnter={() => setHoveredReg(reg)}
+                                      onMouseLeave={() => setHoveredReg(null)}
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold font-mono cursor-pointer transition select-none ${
+                                        isSel
+                                          ? "bg-cyan-400 text-black scale-110 shadow-[0_0_10px_rgba(6,182,212,0.9)]"
+                                          : "bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 hover:text-white"
+                                      }`}
+                                    >
+                                      {reg}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
                             {ins.comment && (
-                              <span className="text-[11px] text-amber-500/80 italic flex-1 font-sans truncate">
+                              <span className="text-[11px] text-amber-500/80 italic flex-1 font-sans truncate pl-2">
                                 → {ins.comment}
                               </span>
                             )}
@@ -1083,7 +1124,54 @@ export default function InvestigationWorkspace({
                       })}
                     </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#05080c] select-text">
+                    <div className="p-6 rounded-xl bg-black/60 border border-amber-500/40 max-w-xl space-y-4 shadow-2xl">
+                      <div className="text-amber-400 font-bold text-base flex items-center justify-center gap-2">
+                        <span>📜</span> Source Code Mapping Unavailable
+                      </div>
+                      <div className="text-gray-300 text-xs font-mono">
+                        Source code mapping for symbol <span className="text-[var(--a)] font-bold">{activeSym?.name}</span> could not be resolved from DWARF line tables.
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-left pt-2 border-t border-white/10">
+                        <div className="bg-white/5 p-2.5 rounded">
+                          <span className="text-gray-400 block text-[10px] uppercase">DWARF Line Tables:</span>
+                          <span className="text-amber-400 font-bold">Stripped / Missing</span>
+                        </div>
+                        <div className="bg-white/5 p-2.5 rounded">
+                          <span className="text-gray-400 block text-[10px] uppercase">Source Archive:</span>
+                          <span className="text-rose-400 font-bold">No ZIP Attached</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-black/50 border border-white/10 p-3 rounded text-left font-mono text-[11px] space-y-1">
+                        <div className="text-gray-400 text-[10px] uppercase font-bold">// Structural Function Signature Preview</div>
+                        <div className="text-emerald-400 font-bold">
+                          // Address: 0x{symDetails && typeof symDetails.value === "number" ? (symDetails.value & ~1).toString(16).padStart(8, "0") : "08000000"}
+                        </div>
+                        <div className="text-cyan-300 font-bold">
+                          void {symDetails?.name || activeSym?.name || "main"}(void);
+                        </div>
+                      </div>
+
+                      <div className="flex justify-center gap-3 pt-2">
+                        <button
+                          onClick={() => setCenterTab("assembly")}
+                          className="px-4 py-1.5 rounded bg-[var(--a-dim)] border border-[var(--a-dim)] text-[var(--a)] font-bold hover:bg-[var(--a)] hover:text-black transition text-xs"
+                        >
+                          ⚙ Switch to Assembly View
+                        </button>
+                        <button
+                          onClick={() => setCenterTab("analysis")}
+                          className="px-4 py-1.5 rounded bg-purple-500/20 border border-purple-500/30 text-purple-300 font-bold hover:bg-purple-500/40 transition text-xs"
+                        >
+                          📊 View Behavioral Analysis
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
