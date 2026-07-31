@@ -39,6 +39,15 @@ class GdbRspClient:
         self.writer = None
         self.connected = False
 
+    async def _keepalive_loop(self):
+        while self.connected:
+            await asyncio.sleep(0.5)
+            if self.connected and self.writer:
+                try:
+                    await self.send_packet("?")
+                except Exception:
+                    pass
+
     async def connect(self):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
@@ -53,6 +62,7 @@ class GdbRspClient:
             except Exception:
                 pass
             print(f"[+] Connected to GDB Server at {self.host}:{self.port}")
+            asyncio.create_task(self._keepalive_loop())
             return True
         except Exception as e:
             print(f"[-] Failed to connect to GDB Server ({self.host}:{self.port}): {e}")
