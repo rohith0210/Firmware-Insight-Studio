@@ -353,6 +353,7 @@ def _resolve_symbol_name(c: dict, target_str: str) -> str | None:
                 v = sym["value"]
                 sym_map[v & ~1] = s_name
                 sym_map[v] = s_name
+                sym_map[v | 1] = s_name
         c["_sym_addr_map"] = sym_map
 
     clean = target_str.strip()
@@ -374,7 +375,42 @@ def _resolve_symbol_name(c: dict, target_str: str) -> str | None:
     if target_addr is None:
         return None
 
-    return sym_map.get(target_addr & ~1) or sym_map.get(target_addr)
+    return sym_map.get(target_addr & ~1) or sym_map.get(target_addr) or sym_map.get(target_addr | 1)
+
+def _clean_c_op(op_str: str) -> str:
+    if not op_str:
+        return ""
+    s = op_str.strip()
+    if s.startswith("#"):
+        s = s[1:].strip()
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        inner_parts = [p.strip().lstrip("#") for p in inner.split(",")]
+        if len(inner_parts) == 1:
+            return f"*{inner_parts[0]}"
+        elif len(inner_parts) == 2:
+            return f"*({inner_parts[0]} + {inner_parts[1]})"
+        else:
+            return f"*({inner})"
+    return s
+
+def _format_call(op_str: str, c: dict) -> str:
+    res_sym = _resolve_symbol_name(c, op_str)
+    if res_sym:
+        return f"{res_sym}();"
+    
+    clean = op_str.strip().lstrip('#').strip()
+    if "<" in clean:
+        parts = clean.split("<")
+        sym = parts[1].rstrip(">").strip()
+        return f"{sym}();"
+    if clean.startswith("0x") or clean.startswith("0X"):
+        addr_hex = clean[2:].zfill(8)
+        return f"subroutine_{addr_hex}();"
+    if clean.isdigit():
+        return f"subroutine_{int(clean):08x}();"
+    
+    return f"subroutine_{clean}();"
 
 @app.get("/api/disasm")
 def disasm(checksum: str = Query(default=""), name: str = Query(default="main")):
@@ -642,53 +678,53 @@ def get_decompiler(checksum: str = Query(default=""), name: str = Query(default=
         for i in instrs:
             mn = i.get("mn", "").lower()
             op = i.get("op", "").strip()
+            
             if mn in ("bl", "blx", "b", "call"):
-                res_sym = _resolve_symbol_name(c, op)
-                if res_sym:
-                    lines.append(f"    {res_sym}();")
-                else:
-                    clean_op = op.lstrip('#').strip()
-                    if "<" in clean_op:
-                        sym_name = clean_op.split("<")[1].rstrip(">").strip()
-                        lines.append(f"    {sym_name}();")
-                    elif clean_op.startswith("0x"):
-                        lines.append(f"    subroutine_{clean_op.replace('0x', '')}();")
-                    else:
-                        lines.append(f"    {op}();")
+                call_line = _format_call(op, c)
+                lines.append(f"    {call_line}")
             elif mn.startswith("str"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    val_op = parts[0]
-                    dst_op = parts[1]
-                    res_sym = _resolve_symbol_name(c, dst_op)
+                    val_c = _clean_c_op(parts[0])
+                    dst_c = _clean_c_op(parts[1])
+                    res_sym = _resolve_symbol_name(c, parts[1])
                     if res_sym:
-                        lines.append(f"    *{res_sym} = {val_op};")
+                        lines.append(f"    {res_sym} = {val_c};")
                     else:
-                        lines.append(f"    *{dst_op} = {val_op};")
+                        lines.append(f"    {dst_c} = {val_c};")
             elif mn.startswith("ldr"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    dst_op = parts[0]
-                    src_op = parts[1]
-                    res_sym = _resolve_symbol_name(c, src_op)
+                    dst_c = _clean_c_op(parts[0])
+                    src_c = _clean_c_op(parts[1])
+                    res_sym = _resolve_symbol_name(c, parts[1])
                     if res_sym:
-                        lines.append(f"    {dst_op} = {res_sym};")
+                        lines.append(f"    {dst_c} = {res_sym};")
                     else:
-                        lines.append(f"    {dst_op} = *({src_op});")
+                        lines.append(f"    {dst_c} = {src_c};")
             elif mn in ("mov", "movs", "movw", "movt"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) >= 2:
-                    dst_op = parts[0]
-                    src_op = parts[1]
-                    res_sym = _resolve_symbol_name(c, src_op)
+                    dst_c = _clean_c_op(parts[0])
+                    src_c = _clean_c_op(parts[1])
+                    res_sym = _resolve_symbol_name(c, parts[1])
                     if res_sym:
-                        lines.append(f"    {dst_op} = &{res_sym};")
+                        lines.append(f"    {dst_c} = &{res_sym};")
                     else:
-                        lines.append(f"    {dst_op} = {src_op};")
+                        lines.append(f"    {dst_c} = {src_c};")
             elif mn in ("add", "adds", "sub", "subs"):
                 parts = [p.strip() for p in op.split(",")]
                 if len(parts) == 3:
-                    lines.append(f"    {parts[0]} = {parts[1]} {mn[0]} {parts[2]};")
+                    op1 = _clean_c_op(parts[1])
+                    op2 = _clean_c_op(parts[2])
+                    lines.append(f"    {_clean_c_op(parts[0])} = {op1} {mn[0]} {op2};")
+                elif len(parts) == 2:
+                    op1 = _clean_c_op(parts[0])
+                    op2 = _clean_c_op(parts[1])
+                    lines.append(f"    {op1} = {op1} {mn[0]} {op2};")
+            elif mn in ("push", "pop"):
+                regs_list = op.strip("{}").strip()
+                lines.append(f"    /* {mn.upper()} {{{regs_list}}} */")
 
         if len(lines) <= 3:
             lines.append("    // Low-level register operations without external subroutine calls.")
