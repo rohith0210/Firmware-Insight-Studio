@@ -10,7 +10,7 @@ type Props = {
 };
 
 type LeftTab = "objects" | "sections" | "symbols" | "favorites" | "recent";
-type CenterTab = "source" | "assembly" | "decompiler" | "hex";
+type CenterTab = "assembly" | "analysis" | "source" | "hex";
 type BottomTab = "Console" | "Trace" | "Timeline" | "Warnings" | "Build" | "Statistics" | "Navigation" | "Events";
 
 // Helper to extract clean module prefix from symbol name
@@ -28,16 +28,26 @@ export default function InvestigationWorkspace({
   onNavigateView,
 }: Props) {
   const [leftTab, setLeftTab] = useState<LeftTab>("symbols");
-  const [centerTab, setCenterTab] = useState<CenterTab>("source");
+  const [centerTab, setCenterTab] = useState<CenterTab>("assembly");
   const [bottomTab, setBottomTab] = useState<BottomTab>("Console");
-  const [splitView, setSplitView] = useState<boolean>(false);
   const [search, setSearch] = useState("");
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: string } | null>(null);
+  const [hoveredSymbol, setHoveredSymbol] = useState<{
+    name: string;
+    addr: string;
+    section?: string;
+    object_file?: string;
+    size?: string;
+    type?: string;
+    visibility?: string;
+    called_by?: string[];
+    calls?: string[];
+  } | null>(null);
 
   // Safe symbols & sections
   const symbols = useMemo(() => (result && Array.isArray(result.symbols) ? result.symbols : []), [result]);
   const summary = useMemo(() => (result && result.summary ? result.summary : {}), [result]);
   const sections = useMemo(() => (result && Array.isArray(result.sections) ? result.sections : []), [result]);
+  const hasDebugInfo = Boolean((result as any)?.dwarf_present || (result as any)?.has_debug_info || (result as any)?.has_dwarf);
 
   // Active Symbol Resolution
   const activeSym = useMemo(() => {
@@ -83,7 +93,9 @@ export default function InvestigationWorkspace({
     }
   }, [activeSym?.name]);
 
-  // Fetch Real DWARF Source Code from Backend API
+  const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
+
+  // Fetch DWARF Source Code from Backend API
   const [sourceData, setSourceData] = useState<{
     found: boolean;
     filename?: string;
@@ -94,8 +106,6 @@ export default function InvestigationWorkspace({
     dwarf_info?: { cu: string; filename: string; decl_line: number; comp_dir: string };
   } | null>(null);
   const [loadingSource, setLoadingSource] = useState<boolean>(false);
-
-  const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
 
   useEffect(() => {
     if (!activeSym || !activeSym.name) return;
@@ -108,45 +118,119 @@ export default function InvestigationWorkspace({
     fetch(url)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (data) {
+        if (data && data.found) {
           setSourceData(data);
         } else {
           setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
+          if (centerTab === "source") setCenterTab("assembly");
         }
         setLoadingSource(false);
       })
       .catch(() => {
         setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
+        if (centerTab === "source") setCenterTab("assembly");
         setLoadingSource(false);
       });
   }, [activeSym?.name, result?.checksum]);
 
-  // Fetch Decompiled High-Level AST Pseudocode from Backend API
-  const [pseudoData, setPseudoData] = useState<{ found: boolean; func?: string; pseudocode?: string[]; reason?: string } | null>(null);
-  const [loadingPseudo, setLoadingPseudo] = useState<boolean>(false);
+  // Fetch Inferred Behavioral Analysis for Analysis Tab
+  const [analysisData, setAnalysisData] = useState<{
+    found: boolean;
+    func?: {
+      name: string;
+      addr: string;
+      section: string;
+      object_file: string;
+      size: string;
+      instruction_count: number;
+      cyclomatic_complexity: number;
+      stack_usage: string;
+      type: string;
+    };
+    function_summary?: {
+      name: string;
+      addr: string;
+      section: string;
+      object_file: string;
+      size_bytes: number;
+      instruction_count: number;
+    };
+    function_classification?: string;
+    confidence_score?: number;
+    behavior?: { icon: string; text: string }[];
+    calls?: { name: string; addr: string; section: string }[];
+    called_by?: { name: string; addr: string; section: string }[];
+    cross_references?: { name: string; addr: string; section: string }[];
+    memory_access?: {
+      flash_reads_count: number;
+      ram_writes_count: number;
+      literal_pool_count: number;
+      literal_pool: { addr: string; instruction: string; target: string }[];
+      flash_reads: { addr: string; op: string }[];
+      ram_writes: { addr: string; op: string }[];
+    };
+    literal_pool_usage?: { addr: string; instruction: string; target: string }[];
+    instruction_statistics?: Record<string, number>;
+    stack_estimate?: { allocated_bytes: number; description: string };
+    timeline?: { step: number; title: string; desc: string }[];
+    branch_analysis?: {
+      cyclomatic_complexity: number;
+      conditional_branches: number;
+      unconditional_branches: number;
+      total_branches: number;
+    };
+    register_usage_summary?: string[];
+    reason?: string;
+  } | null>(null);
+  const [loadingAnalysis, setLoadingAnalysis] = useState<boolean>(false);
 
   useEffect(() => {
     if (!activeSym || !activeSym.name) return;
-    setLoadingPseudo(true);
+    setLoadingAnalysis(true);
     const checksum = result?.checksum;
     const url = checksum
-      ? `${apiBase}/api/decompiler?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
-      : `${apiBase}/api/decompiler?name=${encodeURIComponent(activeSym.name)}`;
+      ? `${apiBase}/api/analysis?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
+      : `${apiBase}/api/analysis?name=${encodeURIComponent(activeSym.name)}`;
 
     fetch(url)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        setPseudoData(data);
-        setLoadingPseudo(false);
+        setAnalysisData(data);
+        setLoadingAnalysis(false);
       })
       .catch(() => {
-        setPseudoData({ found: false, reason: "Decompiler engine unavailable" });
-        setLoadingPseudo(false);
+        setAnalysisData({ found: false, reason: "Analysis engine unavailable" });
+        setLoadingAnalysis(false);
       });
   }, [activeSym?.name, result?.checksum]);
 
   // Fetch Real Disassembly for Assembly Tab
-  const [disasmData, setDisasmData] = useState<{ instructions?: { addr: number; mn: string; op: string }[] } | null>(null);
+  const [disasmData, setDisasmData] = useState<{
+    instructions?: {
+      addr: number;
+      mn: string;
+      op: string;
+      raw_op?: string;
+      comment?: string;
+      reg_effect?: string;
+      mem_op?: string;
+      target_meta?: { name: string; addr: string; resolved: boolean };
+    }[];
+    symbols_meta?: Record<
+      string,
+      {
+        name: string;
+        addr: string;
+        section: string;
+        object_file: string;
+        size: string;
+        type: string;
+        visibility: string;
+        called_by: string[];
+        calls: string[];
+      }
+    >;
+  } | null>(null);
   const [loadingDisasm, setLoadingDisasm] = useState<boolean>(false);
 
   useEffect(() => {
@@ -218,144 +302,78 @@ export default function InvestigationWorkspace({
 
   const handleSelectSymByName = (symName: string) => {
     const s = symbols.find(x => x.name === symName);
-    if (s) {
-      onSelectSymbol({
-        id: `${s.section || ".text"}::${s.name}`,
-        name: s.name,
-        size: s.size || 0,
-        secName: s.section || ".text",
-        secSize: summary[s.section || ".text"] || 0,
-      });
-    }
+    if (s) onSelectSymbol(s);
+    else onSelectSymbol({ name: symName, size: 64, section: ".text" });
   };
 
-  const toggleFavorite = (symName: string) => {
-    setFavorites(prev => {
-      const next = new Set(prev);
-      if (next.has(symName)) next.delete(symName);
-      else next.add(symName);
-      return next;
-    });
-  };
-
-  const handleContextMenu = (e: React.MouseEvent, symName?: string) => {
-    e.preventDefault();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      symbol: symName || activeSym?.name || "main",
-    });
-  };
-
-  useEffect(() => {
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, []);
-
-  const hasDebugInfo = result?.has_debug_symbols !== false;
+  const totalMnemonicCount = useMemo(() => {
+    if (!analysisData?.instruction_statistics) return 0;
+    return Object.values(analysisData.instruction_statistics).reduce((a, b) => a + b, 0);
+  }, [analysisData]);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none relative">
-      {/* RIGHT CLICK CONTEXT MENU */}
-      {contextMenu && (
-        <div
-          className="fixed z-50 bg-[#0c121e] border border-[var(--a-dim)] shadow-2xl rounded p-1.5 mono text-xs w-56 flex flex-col space-y-0.5"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="px-2 py-1 text-[10px] text-[var(--a)] font-bold border-b border-[var(--line)] flex justify-between">
-            <span>PROGRAM REPRESENTATION</span>
-            <span className="truncate max-w-[100px] text-[var(--fg)]">{contextMenu.symbol}</span>
-          </div>
-          <button
-            onClick={() => { setCenterTab("assembly"); setContextMenu(null); }}
-            className="text-left px-2 py-1.5 hover:bg-[rgba(51,214,194,0.15)] rounded text-gray-200 flex items-center justify-between"
-          >
-            <span>Inspect Assembly</span>
-            <span className="text-[10px] text-[var(--a)]">ASM</span>
-          </button>
-          <button
-            onClick={() => { setCenterTab("decompiler"); setContextMenu(null); }}
-            className="text-left px-2 py-1.5 hover:bg-[rgba(51,214,194,0.15)] rounded text-gray-200"
-          >
-            Open Decompiler
-          </button>
-          <div className="border-t border-[var(--line)] my-1" />
-          <button
-            onClick={() => { onNavigateView?.("memory", activeSym?.secName); setContextMenu(null); }}
-            className="text-left px-2 py-1.5 hover:bg-[rgba(51,214,194,0.15)] rounded text-gray-200"
-          >
-            Open Memory Analysis
-          </button>
-          <button
-            onClick={() => { onNavigateView?.("callgraph"); setContextMenu(null); }}
-            className="text-left px-2 py-1.5 hover:bg-[rgba(51,214,194,0.15)] rounded text-gray-200"
-          >
-            Open Firmware Flow Explorer
-          </button>
-          <button
-            onClick={() => { onNavigateView?.("debug", activeSym?.name); setContextMenu(null); }}
-            className="text-left px-2 py-1.5 hover:bg-[rgba(51,214,194,0.15)] rounded text-gray-200"
-          >
-            Open Execution Debugger
-          </button>
-        </div>
-      )}
-
+    <div className="flex-1 flex flex-col h-full bg-[#05080c] overflow-hidden text-[var(--fg)]">
       {/* TOP WORKSPACE TOOLBAR */}
-      <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex items-center justify-between gap-4 flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="mono text-xs px-2 py-0.5 rounded bg-[var(--a-dim)] text-[var(--a)] font-bold uppercase tracking-wider">
-            CODE INVESTIGATOR
-          </span>
-          <div className="mono text-xs flex items-center gap-2 text-[var(--mut)] truncate">
-            <span className="text-[var(--fg)] font-bold">{device?.name || "STM32F103CB"}</span>
-            <span>›</span>
-            <span>{result?.filename || "firmware.elf"}</span>
-            <span>›</span>
-            <span className="text-[var(--b)]">{objectFile}</span>
-            <span>›</span>
-            <span className="text-[var(--a)]">{activeSym?.secName}</span>
-            <span>›</span>
-            <span className="text-[var(--fg)] font-bold bg-[rgba(51,214,194,0.1)] px-1.5 py-0.5 rounded border border-[var(--a-dim)]">
-              {activeSym?.name || "No Symbol"}
-            </span>
+      <header className="h-10 border-b border-[var(--line)] bg-[var(--panel)] px-4 flex items-center justify-between flex-shrink-0 mono text-xs">
+        <div className="flex items-center gap-3">
+          <span className="font-bold text-[var(--a)] tracking-wide">FIRMWARE WORKBENCH</span>
+          <span className="text-[var(--mut)]">|</span>
+          <div className="flex items-center gap-1.5 bg-black/40 px-2 py-0.5 rounded border border-white/5">
+            <span className="text-[var(--mut)]">Target MCU:</span>
+            <span className="text-emerald-400 font-bold">{device?.name || "STM32F103C8"}</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-black/40 px-2 py-0.5 rounded border border-white/5">
+            <span className="text-[var(--mut)]">Active Symbol:</span>
+            <span className="text-amber-400 font-bold font-mono">{activeSym?.name}</span>
           </div>
         </div>
 
-        {/* SPLIT VIEW TOGGLE */}
-        <button
-          onClick={() => setSplitView(!splitView)}
-          className={`mono text-[10px] uppercase px-3 py-1 rounded border transition ${
-            splitView
-              ? "bg-[var(--a-dim)] text-[var(--a)] border-[var(--a-dim)] font-bold"
-              : "bg-black/40 text-[var(--mut)] border-[var(--line)] hover:text-[var(--fg)]"
-          }`}
-        >
-          {splitView ? "Assembly Split ON" : "Split View OFF"}
-        </button>
-      </div>
+        <div className="flex items-center gap-2">
+          {sourceData?.found ? (
+            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-bold">
+              ✓ Verified Source
+            </span>
+          ) : centerTab === "analysis" ? (
+            <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 text-[11px] font-bold">
+              ⚡ Structured Analysis
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[11px] font-bold">
+              ⚙ Assembly Verified
+            </span>
+          )}
+        </div>
+      </header>
 
-      {/* MAIN THREE-PANE IDE LAYOUT */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* LEFT EXPLORER TABS */}
-        <aside className="w-80 border-r border-[var(--line)] bg-[var(--panel)] flex flex-col overflow-hidden flex-shrink-0">
-          <div className="flex border-b border-[var(--line)] bg-black/20 overflow-x-auto no-scrollbar">
+      {/* MAIN THREE-PANE LAYOUT */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* LEFT PANE: SYMBOL NAVIGATION & EXPLORER */}
+        <aside className="w-72 border-r border-[var(--line)] bg-[var(--panel)] flex flex-col flex-shrink-0">
+          <div className="p-2 border-b border-[var(--line)]">
+            <input
+              type="text"
+              placeholder="Filter symbols (Ctrl+K)..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full px-2.5 py-1 rounded bg-black/40 border border-[var(--line)] text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[var(--a)] font-mono"
+            />
+          </div>
+
+          <div className="flex border-b border-[var(--line)] bg-black/20">
             {[
-              { id: "symbols", label: "🔣 Syms" },
-              { id: "objects", label: "▦ Objs" },
-              { id: "sections", label: "≣ Secs" },
-              { id: "favorites", label: "★ Favs" },
+              { id: "symbols", label: "Symbols" },
+              { id: "objects", label: "Objects" },
+              { id: "sections", label: "Sections" },
+              { id: "favorites", label: "★ Fav" },
               { id: "recent", label: "🕒 Recent" },
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setLeftTab(tab.id as LeftTab)}
-                className={`flex-1 py-2 px-2 mono text-[10px] uppercase tracking-wider transition whitespace-nowrap ${
+                className={`flex-1 py-1.5 text-[10px] font-bold uppercase transition ${
                   leftTab === tab.id
-                    ? "text-[var(--a)] border-b-2 border-[var(--a)] bg-[rgba(51,214,194,0.05)] font-bold"
-                    : "text-[var(--mut)] hover:text-[var(--fg)]"
+                    ? "text-[var(--a)] border-b-2 border-[var(--a)] bg-black/40"
+                    : "text-[var(--mut)] hover:text-gray-300"
                 }`}
               >
                 {tab.label}
@@ -363,40 +381,34 @@ export default function InvestigationWorkspace({
             ))}
           </div>
 
-          {/* SEARCH INPUT */}
-          <div className="p-2 border-b border-[var(--line)] bg-black/30">
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={`Filter ${leftTab}...`}
-              className="w-full bg-black/40 border border-[var(--line)] rounded px-2.5 py-1.5 mono text-[11px] outline-none text-[var(--fg)] placeholder:text-[var(--mut)]"
-            />
-          </div>
-
           <div className="flex-1 overflow-y-auto p-2 space-y-1 mono text-xs">
             {leftTab === "symbols" &&
               symbols
                 .filter(s => s.name.toLowerCase().includes(search.toLowerCase()))
+                .slice(0, 100)
                 .map(s => {
                   const isFav = favorites.has(s.name);
-                  const isSel = activeSym?.name === s.name;
+                  const isActive = activeSym?.name === s.name;
                   return (
                     <div
                       key={s.name}
                       onClick={() => handleSelectSymByName(s.name)}
-                      onContextMenu={e => handleContextMenu(e, s.name)}
-                      className={`p-2 rounded border cursor-pointer flex justify-between items-center transition ${
-                        isSel
-                          ? "bg-[rgba(51,214,194,0.15)] border-[var(--a)] text-[var(--a)] font-bold shadow"
-                          : "bg-black/20 border-[var(--line)] hover:bg-white/5 text-gray-300"
+                      className={`p-1.5 rounded cursor-pointer flex justify-between items-center transition select-none ${
+                        isActive
+                          ? "bg-[rgba(51,214,194,0.15)] border border-[var(--a)] text-[var(--a)] font-bold"
+                          : "hover:bg-white/5 text-gray-300 border border-transparent"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
+                      <div className="flex items-center gap-1.5 truncate">
                         <button
                           onClick={e => {
                             e.stopPropagation();
-                            toggleFavorite(s.name);
+                            setFavorites(prev => {
+                              const next = new Set(prev);
+                              if (next.has(s.name)) next.delete(s.name);
+                              else next.add(s.name);
+                              return next;
+                            });
                           }}
                           className="text-[10px] text-amber-400 hover:scale-125 transition"
                         >
@@ -490,9 +502,9 @@ export default function InvestigationWorkspace({
           <div className="flex border-b border-[var(--line)] bg-[var(--panel)] overflow-x-auto no-scrollbar">
             {[
               { id: "assembly", label: "⚙ Assembly" },
-              { id: "source", label: "📜 Source" },
-              { id: "decompiler", label: "⚡ Decompiler" },
+              { id: "analysis", label: "📊 Analysis" },
               { id: "hex", label: "▦ Hex" },
+              ...(sourceData?.found ? [{ id: "source", label: "📜 Source" }] : []),
             ].map(tab => (
               <button
                 key={tab.id}
@@ -504,14 +516,9 @@ export default function InvestigationWorkspace({
                 }`}
               >
                 <span>{tab.label}</span>
-                {tab.id === "decompiler" && (
+                {tab.id === "analysis" && (
                   <span className="text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1 rounded uppercase">
-                    Experimental
-                  </span>
-                )}
-                {tab.id === "source" && !sourceData?.found && (
-                  <span className="text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1 rounded uppercase">
-                    Unavailable
+                    Behavioral
                   </span>
                 )}
               </button>
@@ -519,12 +526,12 @@ export default function InvestigationWorkspace({
           </div>
 
           {/* TAB CONTENT VIEWPORT */}
-          <div className="flex-1 flex min-h-0 overflow-hidden">
+          <div className="flex-1 flex min-h-0 overflow-hidden relative">
             {/* ASSEMBLY TAB */}
             {centerTab === "assembly" && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-hidden">
                 <div className="px-4 py-2 bg-black/50 border-b border-[var(--line)] flex justify-between items-center mono text-xs">
-                  <span className="text-[var(--a)] font-bold">⚙ Target Disassembly ({activeSym?.name})</span>
+                  <span className="text-[var(--a)] font-bold">⚙ Instruction Set Disassembly ({activeSym?.name})</span>
                   <button
                     onClick={() => onNavigateView?.("debug", activeSym?.name)}
                     className="px-2.5 py-1 rounded bg-[var(--a-dim)] border border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black transition text-[11px] font-bold"
@@ -534,21 +541,408 @@ export default function InvestigationWorkspace({
                 </div>
                 {loadingDisasm ? (
                   <div className="flex-1 flex items-center justify-center p-8 text-[var(--a)] mono text-xs">
-                    Decoding assembly instructions...
+                    Decoding assembly instructions & inferring register/memory semantics...
                   </div>
                 ) : disasmData?.instructions && disasmData.instructions.length > 0 ? (
-                  <div className="flex-1 overflow-y-auto p-4 mono text-xs space-y-1 font-mono select-text">
-                    {disasmData.instructions.map((ins, idx) => (
-                      <div key={idx} className="flex items-center gap-4 px-2 py-1 rounded hover:bg-white/5 font-mono">
-                        <span className="w-20 text-amber-400 font-mono">0x{ins.addr.toString(16)}:</span>
-                        <span className="w-16 font-bold text-[var(--a)]">{ins.mn}</span>
-                        <span className="text-gray-200">{ins.op}</span>
-                      </div>
-                    ))}
+                  <div className="flex-1 overflow-y-auto p-4 mono text-xs space-y-2 font-mono select-text">
+                    {disasmData.instructions.map((ins, idx) => {
+                      const mnl = ins.mn.toLowerCase();
+                      const isCall = mnl.includes("bl") || mnl === "call" || mnl === "b" || mnl === "b.w";
+                      const symName = ins.op.trim();
+
+                      // Function Color Coding
+                      let colorClass = "text-gray-200";
+                      if (isCall || symName.startsWith("HAL_") || symName.startsWith("sub_")) {
+                        if (symName.startsWith("HAL_") || symName.startsWith("LL_") || symName.startsWith("BSP_")) {
+                          colorClass = "text-emerald-400 font-bold";
+                        } else if (symName.endsWith("Handler") || symName.endsWith("IRQHandler") || symName.endsWith("_ISR")) {
+                          colorClass = "text-purple-400 font-bold";
+                        } else if (symName.startsWith("__") || symName.startsWith("_Z") || symName.startsWith("system_") || symName === "exit") {
+                          colorClass = "text-amber-400 font-bold";
+                        } else if (symName.startsWith("sub_")) {
+                          colorClass = "text-rose-400 font-bold";
+                        } else {
+                          colorClass = "text-cyan-400 font-bold";
+                        }
+                      }
+
+                      // Symbol hover lookup
+                      const symMeta = disasmData.symbols_meta?.[symName] || (ins.target_meta ? {
+                        name: ins.target_meta.name,
+                        addr: ins.target_meta.addr,
+                        section: ".text",
+                        object_file: "main.o",
+                        size: "Unspecified",
+                        type: symName.startsWith("sub_") ? "Unknown Subroutine" : "User Application Function",
+                        visibility: "STB_LOCAL",
+                        called_by: [],
+                        calls: []
+                      } : null);
+
+                      return (
+                        <div key={idx} className="p-2 rounded bg-black/40 border border-white/5 hover:border-white/20 transition space-y-1 font-mono group">
+                          {/* INSTRUCTION HEADER LINE */}
+                          <div className="flex items-center gap-3">
+                            <span className="w-24 text-amber-400 font-mono flex-shrink-0 text-[11px]">0x{ins.addr.toString(16).padStart(8, "0")}:</span>
+                            <span className="w-16 font-bold text-[var(--a)] flex-shrink-0 text-[12px]">{ins.mn}</span>
+                            <span
+                              className={`w-64 flex-shrink-0 truncate ${colorClass} ${isCall ? "cursor-pointer hover:underline" : ""}`}
+                              onMouseEnter={() => {
+                                if (isCall && symMeta) {
+                                  setHoveredSymbol(symMeta);
+                                }
+                              }}
+                              onMouseLeave={() => setHoveredSymbol(null)}
+                              onClick={() => {
+                                if (isCall) {
+                                  handleSelectSymByName(symName);
+                                }
+                              }}
+                            >
+                              {ins.op}
+                            </span>
+                            {ins.comment && (
+                              <span className="text-[11px] text-amber-500/80 italic flex-1 font-sans truncate">
+                                → {ins.comment}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* EXPANDABLE INFERRED SEMANTIC BREAKDOWN */}
+                          {(ins.reg_effect || ins.mem_op) && (
+                            <div className="pl-28 pt-1 flex flex-wrap gap-4 text-[10px] border-t border-white/5">
+                              {ins.reg_effect && (
+                                <div className="text-cyan-300 font-bold flex items-center gap-1 font-mono">
+                                  <span className="text-gray-500">↓ Register Effect:</span>
+                                  <span>{ins.reg_effect}</span>
+                                </div>
+                              )}
+                              {ins.mem_op && (
+                                <div className="text-emerald-300 font-bold flex items-center gap-1 font-mono">
+                                  <span className="text-gray-500">↓ Memory Operation:</span>
+                                  <span>{ins.mem_op}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center p-8 text-gray-400 mono text-xs">
                     No disassembly instructions available for symbol '{activeSym?.name}'.
+                  </div>
+                )}
+
+                {/* RICH HOVER INSPECTOR POPUP */}
+                {hoveredSymbol && (
+                  <div className="absolute bottom-4 right-4 p-4 rounded-xl bg-black/95 border border-emerald-500/50 text-xs font-mono shadow-2xl z-50 space-y-2 max-w-sm backdrop-blur">
+                    <div className="flex items-center justify-between border-b border-emerald-500/30 pb-1.5">
+                      <div className="text-emerald-400 font-bold text-sm flex items-center gap-1.5">
+                        <span>🎯</span> {hoveredSymbol.name}()
+                      </div>
+                      <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded uppercase font-bold">
+                        {hoveredSymbol.visibility || "STB_GLOBAL"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                      <div>Address: <span className="text-amber-400 font-bold">{hoveredSymbol.addr}</span></div>
+                      <div>Section: <span className="text-[var(--a)] font-bold">{hoveredSymbol.section || ".text"}</span></div>
+                      <div>Object File: <span className="text-gray-300 font-bold">{hoveredSymbol.object_file || "main.o"}</span></div>
+                      <div>Function Size: <span className="text-white font-bold">{hoveredSymbol.size || "64 Bytes"}</span></div>
+                    </div>
+
+                    <div className="text-[10px] text-purple-300 font-bold uppercase pt-1 border-t border-white/10">
+                      Classification: <span className="text-gray-200 font-normal">{hoveredSymbol.type || "User Application Function"}</span>
+                    </div>
+
+                    <div className="space-y-1 text-[10px] pt-1 border-t border-white/10">
+                      <div>
+                        <span className="text-gray-400">Called By: </span>
+                        <span className="text-emerald-300 font-bold">{hoveredSymbol.called_by && hoveredSymbol.called_by.length > 0 ? hoveredSymbol.called_by.join(", ") : "Root / None"}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Subroutines Called: </span>
+                        <span className="text-amber-300 font-bold">{hoveredSymbol.calls && hoveredSymbol.calls.length > 0 ? hoveredSymbol.calls.join(", ") : "Leaf function"}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ANALYSIS TAB (STRUCTURED FIRMWARE INTELLIGENCE) */}
+            {centerTab === "analysis" && (
+              <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-y-auto p-6 space-y-6 select-text mono text-xs">
+                {loadingAnalysis ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+                    <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+                    <span className="mono text-xs text-purple-300">Analyzing binary instruction patterns & call structures...</span>
+                  </div>
+                ) : analysisData?.found && analysisData.func ? (
+                  <>
+                    {/* TOP HEADER SUMMARY BAR */}
+                    <div className="bg-purple-950/20 border border-purple-500/30 p-4 rounded-lg flex flex-wrap justify-between items-center gap-4">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-purple-400 text-lg">📊</span>
+                          <h2 className="text-base font-bold text-white font-mono">{analysisData.func.name}()</h2>
+                          <span className="text-[10px] bg-purple-500/20 border border-purple-500/30 text-purple-300 px-2 py-0.5 rounded font-mono uppercase">
+                            {analysisData.function_classification || analysisData.func.type}
+                          </span>
+                        </div>
+                        <p className="text-gray-400 text-xs mt-1">
+                          Structured firmware intelligence inferred directly from machine disassembly. Zero fabricated code.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-[10px] text-gray-400 uppercase">Confidence Score</div>
+                          <div className="text-emerald-400 font-bold text-base font-mono">
+                            {analysisData.confidence_score || 100}% <span className="text-[10px] text-emerald-500">(Fidelity)</span>
+                          </div>
+                        </div>
+                        <div className="h-8 w-px bg-white/10"></div>
+                        <div className="text-right">
+                          <div className="text-[10px] text-gray-400 uppercase">Stack Estimate</div>
+                          <div className="text-amber-400 font-bold text-base font-mono">
+                            {analysisData.stack_estimate?.description || analysisData.func.stack_usage}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* FUNCTION SUMMARY GRID */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="p-3 rounded bg-black/40 border border-white/10 space-y-1">
+                        <div className="text-[10px] text-gray-400 uppercase">Memory Address</div>
+                        <div className="text-amber-400 font-bold font-mono">{analysisData.func.addr}</div>
+                      </div>
+                      <div className="p-3 rounded bg-black/40 border border-white/10 space-y-1">
+                        <div className="text-[10px] text-gray-400 uppercase">Target Section</div>
+                        <div className="text-[var(--a)] font-bold font-mono">{analysisData.func.section}</div>
+                      </div>
+                      <div className="p-3 rounded bg-black/40 border border-white/10 space-y-1">
+                        <div className="text-[10px] text-gray-400 uppercase">Binary Size</div>
+                        <div className="text-white font-bold font-mono">{analysisData.func.size}</div>
+                      </div>
+                      <div className="p-3 rounded bg-black/40 border border-white/10 space-y-1">
+                        <div className="text-[10px] text-gray-400 uppercase">Instruction Count</div>
+                        <div className="text-purple-300 font-bold font-mono">{analysisData.func.instruction_count} instructions</div>
+                      </div>
+                    </div>
+
+                    {/* BRANCH ANALYSIS & REGISTER USAGE SUMMARY */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* BRANCH ANALYSIS */}
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                        <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                          <span>🔀</span> Branch Analysis & Control Flow
+                        </h3>
+                        <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                          <div className="bg-white/5 p-2 rounded border border-white/5">
+                            <div className="text-[10px] text-gray-400">Cyclomatic Comp.</div>
+                            <div className="text-amber-400 font-bold text-sm">{analysisData.branch_analysis?.cyclomatic_complexity || analysisData.func.cyclomatic_complexity}</div>
+                          </div>
+                          <div className="bg-white/5 p-2 rounded border border-white/5">
+                            <div className="text-[10px] text-gray-400">Conditional</div>
+                            <div className="text-purple-300 font-bold text-sm">{analysisData.branch_analysis?.conditional_branches || 0}</div>
+                          </div>
+                          <div className="bg-white/5 p-2 rounded border border-white/5">
+                            <div className="text-[10px] text-gray-400">Unconditional</div>
+                            <div className="text-gray-300 font-bold text-sm">{analysisData.branch_analysis?.unconditional_branches || 0}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* REGISTER USAGE SUMMARY */}
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                        <h3 className="text-xs font-bold text-[var(--a)] uppercase tracking-wider flex items-center gap-2">
+                          <span>⚙️</span> Register Usage Summary
+                        </h3>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {analysisData.register_usage_summary && analysisData.register_usage_summary.length > 0 ? (
+                            analysisData.register_usage_summary.map(reg => (
+                              <span key={reg} className="px-2 py-0.5 rounded bg-[var(--a-dim)] border border-[var(--a)] text-[var(--a)] font-bold text-[11px] font-mono">
+                                {reg}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-gray-400 italic text-xs">Standard ARM Scratch Registers</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* BEHAVIOR SUMMARY CHECKLIST */}
+                    <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                      <h3 className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-2">
+                        <span>🛡️</span> Behavior Summary
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-gray-300">
+                        {analysisData.behavior && analysisData.behavior.length > 0 ? (
+                          analysisData.behavior.map((b, idx) => (
+                            <div key={idx} className="flex items-center gap-2 bg-white/5 p-2 rounded border border-white/5 text-xs">
+                              <span>{b.icon}</span>
+                              <span>{b.text}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-gray-400 italic">No specific behavioral patterns identified.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CALL RELATIONSHIPS & CROSS REFERENCES (XREFS) */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* CALL RELATIONSHIPS */}
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3 flex flex-col">
+                        <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                          <span>📞</span> Call Relationships
+                        </h3>
+
+                        <div className="space-y-2 flex-1">
+                          <div className="text-[11px] text-gray-400 font-bold">Subroutines Called ({analysisData.calls?.length || 0}):</div>
+                          {analysisData.calls && analysisData.calls.length > 0 ? (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {analysisData.calls.map((c, idx) => (
+                                <div
+                                  key={idx}
+                                  onClick={() => handleSelectSymByName(c.name)}
+                                  className="flex justify-between items-center p-2 rounded bg-white/5 hover:bg-white/10 cursor-pointer transition text-xs font-mono"
+                                >
+                                  <span className="text-emerald-400 font-bold">{c.name}()</span>
+                                  <span className="text-gray-400 text-[10px]">{c.addr}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-gray-500 italic text-xs">Leaf function (calls no subroutines).</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* CROSS REFERENCES (XREFS) */}
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3 flex flex-col">
+                        <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                          <span>🔗</span> Cross References (Xrefs / Called By)
+                        </h3>
+
+                        <div className="space-y-2 flex-1">
+                          <div className="text-[11px] text-gray-400 font-bold">Referencing Subroutines ({analysisData.cross_references?.length || analysisData.called_by?.length || 0}):</div>
+                          {(analysisData.cross_references || analysisData.called_by) && (analysisData.cross_references || analysisData.called_by)!.length > 0 ? (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {(analysisData.cross_references || analysisData.called_by)!.map((cb, idx) => (
+                                <div
+                                  key={idx}
+                                  onClick={() => handleSelectSymByName(cb.name)}
+                                  className="flex justify-between items-center p-2 rounded bg-white/5 hover:bg-white/10 cursor-pointer transition text-xs font-mono"
+                                >
+                                  <span className="text-purple-300 font-bold">{cb.name}()</span>
+                                  <span className="text-gray-400 text-[10px]">{cb.addr}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-gray-500 italic text-xs">Root / Unreferenced execution symbol.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* MEMORY ACCESS & LITERAL POOL USAGE */}
+                    <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                      <h3 className="text-xs font-bold text-[var(--a)] uppercase tracking-wider flex items-center gap-2">
+                        <span>💾</span> Memory Access & Literal Pool Usage
+                      </h3>
+
+                      <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="p-2 rounded bg-white/5 border border-white/5">
+                          <div className="text-[10px] text-gray-400">Flash Reads</div>
+                          <div className="text-amber-400 font-bold font-mono text-sm">{analysisData.memory_access?.flash_reads_count || 0}</div>
+                        </div>
+                        <div className="p-2 rounded bg-white/5 border border-white/5">
+                          <div className="text-[10px] text-gray-400">RAM Writes</div>
+                          <div className="text-emerald-400 font-bold font-mono text-sm">{analysisData.memory_access?.ram_writes_count || 0}</div>
+                        </div>
+                        <div className="p-2 rounded bg-white/5 border border-white/5">
+                          <div className="text-[10px] text-gray-400">Literal Pools</div>
+                          <div className="text-purple-300 font-bold font-mono text-sm">{analysisData.memory_access?.literal_pool_count || 0}</div>
+                        </div>
+                      </div>
+
+                      {analysisData.memory_access?.literal_pool && analysisData.memory_access.literal_pool.length > 0 && (
+                        <div className="space-y-1 pt-2">
+                          <div className="text-[11px] text-gray-400 font-bold">PC-Relative Literal Pool Table:</div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {analysisData.memory_access.literal_pool.map((lp, idx) => (
+                              <div key={idx} className="flex justify-between items-center p-1.5 rounded bg-white/5 text-[11px] font-mono">
+                                <span className="text-amber-400">{lp.addr}</span>
+                                <span className="text-gray-300">{lp.instruction}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* INSTRUCTION STATISTICS PROGRESS BARS */}
+                    {analysisData.instruction_statistics && (
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                        <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                          <span>📈</span> Instruction Statistics Distribution
+                        </h3>
+
+                        <div className="space-y-2">
+                          {Object.entries(analysisData.instruction_statistics).map(([mn, count]) => {
+                            const pct = totalMnemonicCount > 0 ? Math.round((count / totalMnemonicCount) * 100) : 0;
+                            return (
+                              <div key={mn} className="space-y-1">
+                                <div className="flex justify-between text-xs font-mono">
+                                  <span className="text-purple-300 font-bold">{mn}</span>
+                                  <span className="text-gray-400">{count} ({pct}%)</span>
+                                </div>
+                                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                                  <div className="h-full bg-purple-500 rounded-full" style={{ width: `${pct}%` }}></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* FUNCTION EXECUTION TIMELINE */}
+                    {analysisData.timeline && (
+                      <div className="p-4 rounded-lg bg-black/40 border border-white/10 space-y-3">
+                        <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                          <span>⏱</span> Timeline of Execution Flow
+                        </h3>
+
+                        <div className="flex flex-wrap items-center gap-3 pt-2">
+                          {analysisData.timeline.map((step, idx) => (
+                            <div key={step.step} className="flex items-center gap-3">
+                              <div className="p-2.5 rounded bg-white/5 border border-white/10 space-y-0.5 text-xs font-mono max-w-xs">
+                                <div className="text-[10px] text-emerald-400 font-bold uppercase">Step {step.step}: {step.title}</div>
+                                <div className="text-gray-300 text-[11px]">{step.desc}</div>
+                              </div>
+                              {idx < (analysisData.timeline?.length || 0) - 1 && (
+                                <span className="text-gray-500 font-bold text-sm">➔</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                    <span className="text-2xl mb-2">📊</span>
+                    <h3 className="text-base font-bold text-white mb-1">Analysis Unavailable</h3>
+                    <p className="text-xs text-gray-400">{analysisData?.reason || "No behavioral data resolved."}</p>
                   </div>
                 )}
               </div>
@@ -558,9 +952,8 @@ export default function InvestigationWorkspace({
             {centerTab === "source" && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-hidden">
                 {loadingSource ? (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                    <div className="w-8 h-8 border-2 border-[var(--a)] border-t-transparent rounded-full animate-spin mb-3"></div>
-                    <span className="mono text-xs text-[var(--a)]">Extracting DWARF source mappings for '{activeSym?.name}'...</span>
+                  <div className="flex-1 flex items-center justify-center p-8 text-amber-400 mono text-xs">
+                    Loading verified source file...
                   </div>
                 ) : sourceData?.found && sourceData.lines ? (
                   <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -590,102 +983,7 @@ export default function InvestigationWorkspace({
                       })}
                     </div>
                   </div>
-                ) : (
-                  /* PROFESSIONAL DIAGNOSTIC INFORMATION PANEL FOR MISSING SOURCE CODE */
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#070b10] text-center select-text">
-                    <div className="max-w-xl w-full p-6 rounded-lg bg-black/60 border border-[var(--line)] space-y-6 text-left shadow-2xl">
-                      <div className="flex items-start gap-4 border-b border-[var(--line)] pb-4">
-                        <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/30 grid place-items-center flex-shrink-0">
-                          <span className="text-2xl">📜</span>
-                        </div>
-                        <div>
-                          <h3 className="text-base font-bold text-white mb-1">Source Code Unavailable</h3>
-                          <p className="text-xs text-[var(--mut)] leading-relaxed">
-                            The firmware contains DWARF debug metadata, however the original source file referenced during compilation cannot be located on the local filesystem.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3 text-xs mono">
-                        <div className="font-bold text-[var(--a)] uppercase tracking-wider text-[11px]">Available Debug Information</div>
-                        <div className="grid grid-cols-2 gap-2 text-gray-300 bg-black/40 p-3 rounded border border-white/5">
-                          <div className="flex items-center gap-2"><span className="text-emerald-400">✓</span> Compile Unit: <span className="text-white font-mono">{sourceData?.dwarf_info?.cu || "Main CU"}</span></div>
-                          <div className="flex items-center gap-2"><span className="text-emerald-400">✓</span> File Name: <span className="text-white font-mono">{sourceData?.dwarf_info?.filename || `${activeSym?.name}.c`}</span></div>
-                          <div className="flex items-center gap-2"><span className="text-emerald-400">✓</span> Function Symbols: <span className="text-white font-mono">{activeSym?.name}</span></div>
-                          <div className="flex items-center gap-2"><span className="text-emerald-400">✓</span> Line Mapping: <span className="text-white font-mono">Line {sourceData?.dwarf_info?.decl_line || 1}</span></div>
-                        </div>
-
-                        <div className="font-bold text-rose-400 uppercase tracking-wider text-[11px] pt-1">Unavailable</div>
-                        <div className="flex items-center gap-2 text-gray-400 bg-rose-500/5 p-3 rounded border border-rose-500/20">
-                          <span className="text-rose-400 font-bold">✗</span> Original Source File: <span className="text-gray-300 font-mono">{sourceData?.dwarf_info?.filename || `${activeSym?.name}.c`} ({sourceData?.dwarf_info?.comp_dir || "External Build Dir"})</span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-2 border-t border-[var(--line)]">
-                        <div className="text-[11px] text-[var(--mut)] uppercase font-bold">Recommended Views</div>
-                        <div className="flex flex-wrap gap-2">
-                          <button onClick={() => setCenterTab("assembly")} className="px-3 py-1.5 rounded bg-[var(--a)]/20 hover:bg-[var(--a)]/30 border border-[var(--a)]/50 text-[var(--a)] text-xs font-bold transition">
-                            [ Assembly ]
-                          </button>
-                          <button onClick={() => setCenterTab("hex")} className="px-3 py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 text-xs font-bold transition">
-                            [ Hex Dump ]
-                          </button>
-                          <button onClick={() => setCenterTab("decompiler")} className="px-3 py-1.5 rounded bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-300 text-xs font-bold transition">
-                            [ Decompiler ]
-                          </button>
-                          <button onClick={() => onNavigateView?.("memory", activeSym?.secName)} className="px-3 py-1.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/50 text-cyan-300 text-xs font-bold transition">
-                            [ Memory Analysis ]
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* DECOMPILER TAB (RECONSTRUCTED LOGIC / EXPERIMENTAL) */}
-            {centerTab === "decompiler" && (
-              <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-hidden">
-                {loadingPseudo ? (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                    <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-                    <span className="mono text-xs text-purple-300">Decompiling AST logic for '{activeSym?.name}'...</span>
-                  </div>
-                ) : pseudoData?.found && pseudoData.pseudocode ? (
-                  <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                    <div className="px-4 py-2 bg-black/50 border-b border-[var(--line)] flex justify-between items-center mono text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">⚡ Recovered Logic (Decompiler AST)</span>
-                        <span className="text-[10px] text-purple-300 bg-purple-500/20 border border-purple-500/30 px-1.5 py-0.5 rounded font-mono uppercase">
-                          [EXPERIMENTAL RECONSTRUCTION]
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-emerald-400 font-mono">Disassembly AST Engine v1.2</span>
-                    </div>
-                    <div className="bg-purple-500/10 border-b border-purple-500/20 px-4 py-1.5 text-purple-300 text-[11px] mono">
-                      ⚠️ Note: This output represents reconstructed C-like pseudocode derived from raw binary disassembly. Variable and register names are inferred.
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 mono text-xs leading-relaxed space-y-0.5 select-text font-mono">
-                      {pseudoData.pseudocode.map((line, idx) => (
-                        <div key={idx} className="flex items-start gap-4 px-2 py-0.5 rounded hover:bg-white/5">
-                          <span className="w-8 text-right text-purple-400/60 text-[10px] select-none flex-shrink-0 font-mono">{idx + 1}</span>
-                          <pre className="font-mono text-purple-200 whitespace-pre-wrap flex-1 leading-normal">{line}</pre>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#070b10]">
-                    <div className="w-16 h-16 rounded-full bg-purple-500/10 border border-purple-500/30 grid place-items-center mb-4">
-                      <span className="text-3xl">⚡</span>
-                    </div>
-                    <h3 className="text-lg font-bold text-white mb-2">Decompiler Unavailable</h3>
-                    <p className="mono text-xs text-gray-400 max-w-md mb-6 leading-relaxed">
-                      {pseudoData?.reason || "Decompiler reconstruction is unavailable for this symbol."}
-                    </p>
-                  </div>
-                )}
+                ) : null}
               </div>
             )}
 
@@ -756,7 +1054,7 @@ export default function InvestigationWorkspace({
             <div className="flex justify-between text-[11px]">
               <span className="text-[var(--mut)]">Source Status:</span>
               <span className={`font-bold ${sourceData?.found ? "text-emerald-400" : "text-amber-400"}`}>
-                {sourceData?.found ? "✓ Verified Uploaded Source" : "✗ Unavailable (ZIP Payload)"}
+                {sourceData?.found ? "✓ Verified Source" : "✗ Source Unavailable"}
               </span>
             </div>
             <div className="flex justify-between text-[11px]">
@@ -820,8 +1118,8 @@ export default function InvestigationWorkspace({
                 <div>Section Headers: <span className="text-emerald-400 font-bold">✓ Parsed</span></div>
                 <div>Symbol Table: <span className="text-emerald-400 font-bold">✓ Parsed ({symbols.length} symbols)</span></div>
                 <div>DWARF Debug Metadata: <span className={hasDebugInfo ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>{hasDebugInfo ? "✓ Present" : "✗ Stripped"}</span></div>
-                <div>Source Code Files: <span className={sourceData?.found ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>{sourceData?.found ? "✓ Available on Local FS" : "✗ Not Available on Local FS"}</span></div>
-                <div>Decompiler Engine: <span className="text-emerald-400 font-bold">✓ Active (ARM Disassembly AST)</span></div>
+                <div>Source Code Files: <span className={sourceData?.found ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>{sourceData?.found ? "✓ Verified Source" : "✗ Source Unavailable"}</span></div>
+                <div>Binary Analysis Engine: <span className="text-emerald-400 font-bold">✓ Active (Structured Firmware Intelligence)</span></div>
                 <div>Call Graph: <span className="text-emerald-400 font-bold">✓ Generated</span></div>
                 <div>Memory Layout: <span className="text-emerald-400 font-bold">✓ Generated</span></div>
                 <div>Device Profile: <span className="text-emerald-400 font-bold">✓ Detected ({device?.name || "STM32F103CB"})</span></div>

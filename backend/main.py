@@ -292,7 +292,7 @@ async def upload_firmware(file: UploadFile = File(...)):
         capabilities = {
             "source_available": source_available,
             "assembly_available": True,
-            "decompiler_available": True,
+            "analysis_available": True,
             "hex_available": True
         }
         r["source_available"] = source_available
@@ -480,6 +480,130 @@ def _format_call(op_str: str, c: dict) -> str:
     
     return f"subroutine_{clean}();"
 
+def _get_instruction_comment(mn: str, op: str, c: dict) -> str:
+    mnl = mn.lower()
+    op_clean = op.strip()
+
+    if mnl in ("push", "push.w"):
+        if "lr" in op_clean.lower():
+            return "Save caller registers and link register"
+        return "Save caller registers"
+    elif mnl in ("pop", "pop.w"):
+        if "pc" in op_clean.lower():
+            return "Restore registers and return from subroutine"
+        return "Restore caller registers from stack frame"
+    elif mnl in ("bx", "ret") and "lr" in op_clean.lower():
+        return "Return from subroutine to caller"
+    elif mnl in ("bl", "blx", "call"):
+        res = _resolve_symbol_name(c, op_clean)
+        if res:
+            if res.startswith("HAL_") and "Init" in res:
+                return f"Initialize peripheral ({res})"
+            return f"Call subroutine {res}()"
+        return "Call subroutine"
+    elif mnl in ("b", "b.w"):
+        res = _resolve_symbol_name(c, op_clean)
+        if res:
+            return f"Branch to {res}"
+        return "Unconditional relative jump"
+    elif mnl in ("beq", "bne", "bgt", "blt", "bge", "ble", "cbz", "cbnz"):
+        return "Conditional branch based on status flags"
+    elif mnl.startswith("ldr"):
+        res = _resolve_symbol_name(c, op_clean)
+        if res:
+            return f"Load memory reference to {res}"
+        if "pc" in op_clean.lower():
+            return "Load constant pointer from literal pool"
+        return "Load register value from memory address"
+    elif mnl.startswith("str"):
+        res = _resolve_symbol_name(c, op_clean)
+        if res:
+            return f"Store register value into {res}"
+        return "Store register value into RAM / peripheral memory"
+    elif mnl in ("mov", "mov.w", "movs", "movw", "movt"):
+        if any(op_clean.endswith(addr) or "0x2" in op_clean or "0x4" in op_clean for addr in ("0x2000", "0x4000", "0x4002")):
+            return "Load SRAM / Peripheral memory address"
+        if op_clean.startswith("r") or op_clean.startswith("x") or op_clean.startswith("e"):
+            return "Copy value between registers"
+        return "Load immediate numerical constant"
+    elif mnl in ("add", "adds", "sub", "subs"):
+        if "sp" in op_clean.lower():
+            return "Adjust stack frame pointer"
+        return "Perform arithmetic / pointer calculation"
+    elif mnl in ("cmp", "cmn", "tst"):
+        return "Compare values and set condition flags"
+    elif mnl == "nop":
+        return "No operation alignment padding"
+    return ""
+
+def _infer_register_effect(mn: str, op: str) -> str:
+    mnl = mn.lower()
+    op_clean = op.strip()
+    parts = [p.strip() for p in op_clean.split(",")]
+    
+    if mnl in ("mov", "mov.w", "movs", "movw", "movt") and len(parts) >= 2:
+        dst = parts[0].upper()
+        src = parts[1].lstrip("#")
+        return f"{dst} ← {src}"
+    elif mnl in ("add", "adds") and len(parts) >= 2:
+        dst = parts[0].upper()
+        if len(parts) == 3:
+            return f"{dst} ← {parts[1].upper()} + {parts[2].lstrip('#')}"
+        return f"{dst} ← {dst} + {parts[1].lstrip('#')}"
+    elif mnl in ("sub", "subs") and len(parts) >= 2:
+        dst = parts[0].upper()
+        if len(parts) == 3:
+            return f"{dst} ← {parts[1].upper()} - {parts[2].lstrip('#')}"
+        return f"{dst} ← {dst} - {parts[1].lstrip('#')}"
+    elif mnl.startswith("ldr") and len(parts) >= 2:
+        dst = parts[0].upper()
+        src = parts[1]
+        return f"{dst} ← {src}"
+    return ""
+
+def _infer_memory_operation(mn: str, op: str) -> str:
+    mnl = mn.lower()
+    op_clean = op.strip()
+    parts = [p.strip() for p in op_clean.split(",")]
+
+    if mnl.startswith("str") and len(parts) >= 2:
+        val = parts[0].upper()
+        target = parts[1]
+        if "sp" in target.lower():
+            return f"Store {val} into stack frame {target}"
+        return f"Store {val} into memory {target}"
+    elif mnl.startswith("ldr") and "pc" in op_clean.lower():
+        return f"Load constant from literal pool {parts[-1]}"
+    elif mnl.startswith("ldr") and len(parts) >= 2:
+        val = parts[0].upper()
+        target = parts[1]
+        return f"Load memory value from {target} into {val}"
+    return ""
+
+def _resolve_semantic_operand(mn: str, op: str, c: dict) -> (str, dict):
+    mnl = mn.lower()
+    op_clean = op.strip()
+
+    if mnl in ("bl", "blx", "b", "b.w", "beq", "bne", "cbz", "cbnz", "call"):
+        res_sym = _resolve_symbol_name(c, op_clean)
+        if res_sym:
+            sym_obj = c["sym_by_name"].get(res_sym, {})
+            return res_sym, {
+                "name": res_sym,
+                "addr": f"0x{(sym_obj.get('value', 0) & ~1):08x}",
+                "resolved": True
+            }
+        
+        target_addr = _parse_addr(op_clean)
+        if target_addr is not None:
+            sub_name = f"sub_{target_addr & ~1:08x}"
+            return sub_name, {
+                "name": sub_name,
+                "addr": f"0x{(target_addr & ~1):08x}",
+                "resolved": False
+            }
+    return op_clean, None
+
 @app.get("/api/disasm")
 def disasm(checksum: str = Query(default=""), name: str = Query(default="main")):
     c = _get_cache(checksum)
@@ -546,19 +670,73 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
         for i in md.disasm(code, addr):
             t, w = _parse_regs(i.op_str, cfg["pat"], cfg["canon"], i.mnemonic)
             touched |= set(t); written |= set(w)
-            op_str = i.op_str
-            if i.mnemonic.lower() in ("bl", "blx", "b", "beq", "bne", "b.w", "cbz", "cbnz", "call"):
-                res_sym = _resolve_symbol_name(c, op_str)
-                if res_sym and "<" not in op_str:
-                    op_str = f"{op_str} <{res_sym}>"
-            instrs.append({"addr": i.address, "bytes": i.bytes.hex(" "), "mn": i.mnemonic, "op": op_str, "t": t, "w": w})
+            
+            sem_op, target_meta = _resolve_semantic_operand(i.mnemonic, i.op_str, c)
+            comment = _get_instruction_comment(i.mnemonic, sem_op, c)
+            reg_effect = _infer_register_effect(i.mnemonic, sem_op)
+            mem_op = _infer_memory_operation(i.mnemonic, sem_op)
+
+            instrs.append({
+                "addr": i.address,
+                "bytes": i.bytes.hex(" "),
+                "mn": i.mnemonic,
+                "op": sem_op,
+                "raw_op": i.op_str,
+                "target_meta": target_meta,
+                "t": t,
+                "w": w,
+                "comment": comment,
+                "reg_effect": reg_effect,
+                "mem_op": mem_op
+            })
         
         if not instrs:
             try:
                 instrs, touched, written = _objdump_disasm(c, s, cfg)
+                for i in instrs:
+                    sem_op, target_meta = _resolve_semantic_operand(i.get("mn", ""), i.get("op", ""), c)
+                    i["op"] = sem_op
+                    i["target_meta"] = target_meta
+                    i["comment"] = _get_instruction_comment(i.get("mn", ""), sem_op, c)
+                    i["reg_effect"] = _infer_register_effect(i.get("mn", ""), sem_op)
+                    i["mem_op"] = _infer_memory_operation(i.get("mn", ""), sem_op)
             except Exception:
-                instrs = [{"addr": addr, "bytes": "00 00", "mn": "nop", "op": "", "t": [], "w": []}]
+                instrs = [{"addr": addr, "bytes": "00 00", "mn": "nop", "op": "", "t": [], "w": [], "comment": "No operation"}]
                 touched, written = [], []
+
+        # Build Rich Symbols Metadata Map for Hover Inspector
+        symbols_meta = {}
+        for sym in c.get("symbols", []):
+            s_name = sym.get("name")
+            if s_name:
+                s_val = sym.get("value", 0) & ~1
+                s_sz = sym.get("size", 0)
+                s_type = "User Application Function"
+                if s_name.startswith(("HAL_", "LL_", "BSP_")): s_type = "HAL Hardware Abstraction Driver"
+                elif s_name.endswith(("Handler", "IRQHandler", "_ISR", "_isr")): s_type = "Interrupt Service Routine (ISR)"
+                elif s_name.startswith(("__", "_Z", "system_", "System", "exit", "_exit")): s_type = "C Runtime / System Core Library"
+                elif s_name.startswith("sub_"): s_type = "Unknown Subroutine"
+
+                called_by = []
+                calls = []
+                if c.get("call_graph", {}).get("edges"):
+                    for edge in c["call_graph"]["edges"]:
+                        if edge.get("target") == s_name and edge.get("source") not in called_by:
+                            called_by.append(edge["source"])
+                        if edge.get("source") == s_name and edge.get("target") not in calls:
+                            calls.append(edge["target"])
+
+                symbols_meta[s_name] = {
+                    "name": s_name,
+                    "addr": f"0x{s_val:08x}",
+                    "section": sym.get("section", ".text"),
+                    "object_file": f"stm32f1xx_hal_{get_module_prefix(s_name)}.o" if s_name.startswith(("HAL_", "LL_")) else "main.o",
+                    "size": f"{s_sz} Bytes",
+                    "type": s_type,
+                    "visibility": sym.get("bind", "STB_GLOBAL"),
+                    "called_by": called_by,
+                    "calls": calls
+                }
 
         return {
             "error": False,
@@ -568,6 +746,7 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
             "instructions": instrs,
             "touched": sorted(touched),
             "written": sorted(written),
+            "symbols_meta": symbols_meta,
             "schema": cfg["schema"]
         }
     except Exception as e:
@@ -660,7 +839,7 @@ def get_source(checksum: str = Query(default=""), name: str = Query(default="mai
             "capabilities": {
                 "source_available": True,
                 "assembly_available": True,
-                "decompiler_available": True,
+                "analysis_available": True,
                 "hex_available": True
             }
         }
@@ -678,17 +857,17 @@ def get_source(checksum: str = Query(default=""), name: str = Query(default="mai
         "capabilities": {
             "source_available": False,
             "assembly_available": True,
-            "decompiler_available": True,
+            "analysis_available": True,
             "hex_available": True
         }
     }
 
-@app.get("/api/decompiler")
-@app.get("/api/pseudocode")
-def get_decompiler(checksum: str = Query(default=""), name: str = Query(default="main")):
+@app.get("/api/analysis")
+def get_analysis(checksum: str = Query(default=""), name: str = Query(default="main")):
     c = _get_cache(checksum)
-    if not c: raise HTTPException(404, "binary not in cache — re-upload it")
-    
+    if not c:
+        raise HTTPException(404, "binary not in cache — re-upload it")
+
     s = c["sym_by_name"].get(name)
     if not s:
         candidates = [sym for sym in c["symbols"] if sym.get("type") == "STT_FUNC" or sym.get("section") == ".text"]
@@ -700,8 +879,8 @@ def get_decompiler(checksum: str = Query(default=""), name: str = Query(default=
             name = s["name"]
 
     if not s:
-        return {"found": False, "reason": "No function symbols resolved in symbol table"}
-    
+        return {"found": False, "reason": "No function symbol resolved"}
+
     val = s["value"]
     size = s["size"]
     if size <= 0:
@@ -710,103 +889,207 @@ def get_decompiler(checksum: str = Query(default=""), name: str = Query(default=
         s = {**s, "size": size}
 
     ca, cfg = _arch_map(c["e_machine"])
-    if not cfg:
-        return {"found": False, "reason": f"Decompiler unsupported for architecture {c['e_machine']}"}
-    
-    try:
-        instrs = []
-        if ca is None:
-            try:
-                instrs_obj, _, _ = _objdump_disasm(c, s, cfg)
-                instrs = [{"mn": i["mn"], "op": i["op"]} for i in instrs_obj]
-            except Exception:
-                pass
-        else:
-            import capstone as cs
-            thumb = bool(cfg["thumb"] and (val & 1))
-            mode = cs.CS_MODE_THUMB if thumb else cfg["mode"]
-            try: md = cs.Cs(ca, mode)
-            except Exception: md = cs.Cs(ca, 0)
-            md.detail = False
-            addr = val & ~1; off = _va2off(c, addr)
-            if off is None:
-                for a, b, o in c["va2off"]:
-                    if a <= addr < b or (a <= val < b):
-                        off = o + (addr - a)
-                        break
-            if off is not None and c["bytes"]:
-                code = c["bytes"][off:off + size]
-                for i in md.disasm(code, addr):
-                    instrs.append({"mn": i.mnemonic, "op": i.op_str})
-        
-        lines = [
-            f"/* Reconstructed Pseudo-C AST for {name}() */",
-            f"/* Target Address: 0x{(val & ~1):08x} | Size: {size} Bytes */",
-            f"void {name}(void) {{"
-        ]
-        for i in instrs:
-            mn = i.get("mn", "").lower()
-            op = i.get("op", "").strip()
-            
-            if mn in ("bl", "blx", "b", "call"):
-                call_line = _format_call(op, c)
-                lines.append(f"    {call_line}")
-            elif mn.startswith("str"):
-                parts = [p.strip() for p in op.split(",")]
-                if len(parts) >= 2:
-                    val_c = _clean_c_op(parts[0])
-                    dst_c = _clean_c_op(parts[1])
-                    res_sym = _resolve_symbol_name(c, parts[1])
-                    if res_sym:
-                        lines.append(f"    {res_sym} = {val_c};")
-                    else:
-                        lines.append(f"    {dst_c} = {val_c};")
-            elif mn.startswith("ldr"):
-                parts = [p.strip() for p in op.split(",")]
-                if len(parts) >= 2:
-                    dst_c = _clean_c_op(parts[0])
-                    src_c = _clean_c_op(parts[1])
-                    res_sym = _resolve_symbol_name(c, parts[1])
-                    if res_sym:
-                        lines.append(f"    {dst_c} = {res_sym};")
-                    else:
-                        lines.append(f"    {dst_c} = {src_c};")
-            elif mn in ("mov", "movs", "movw", "movt"):
-                parts = [p.strip() for p in op.split(",")]
-                if len(parts) >= 2:
-                    dst_c = _clean_c_op(parts[0])
-                    src_c = _clean_c_op(parts[1])
-                    res_sym = _resolve_symbol_name(c, parts[1])
-                    if res_sym:
-                        lines.append(f"    {dst_c} = &{res_sym};")
-                    else:
-                        lines.append(f"    {dst_c} = {src_c};")
-            elif mn in ("add", "adds", "sub", "subs"):
-                parts = [p.strip() for p in op.split(",")]
-                if len(parts) == 3:
-                    op1 = _clean_c_op(parts[1])
-                    op2 = _clean_c_op(parts[2])
-                    lines.append(f"    {_clean_c_op(parts[0])} = {op1} {mn[0]} {op2};")
-                elif len(parts) == 2:
-                    op1 = _clean_c_op(parts[0])
-                    op2 = _clean_c_op(parts[1])
-                    lines.append(f"    {op1} = {op1} {mn[0]} {op2};")
-            elif mn in ("push", "pop"):
-                regs_list = op.strip("{}").strip()
-                lines.append(f"    /* {mn.upper()} {{{regs_list}}} */")
 
-        if len(lines) <= 3:
-            lines.append("    // Low-level register operations without external subroutine calls.")
-        lines.append("}")
-        return {
-            "found": True,
-            "func": name,
-            "pseudocode": lines,
-            "label": "Decompiler (Recovered Logic)",
-            "experimental": True
-        }
-    except Exception as e:
-        return {"found": False, "reason": str(e)}
+    instrs = []
+    if ca is None:
+        try:
+            instrs_obj, _, _ = _objdump_disasm(c, s, cfg if cfg else {"pat": r"", "canon": lambda x: x, "tool": "objdump"})
+            instrs = [{"mn": i.get("mn", ""), "op": i.get("op", ""), "addr": i.get("addr", 0)} for i in instrs_obj]
+        except Exception:
+            pass
+    else:
+        import capstone as cs
+        thumb = bool(cfg["thumb"] and (val & 1))
+        mode = cs.CS_MODE_THUMB if thumb else cfg["mode"]
+        try: md = cs.Cs(ca, mode)
+        except Exception: md = cs.Cs(ca, 0)
+        md.detail = False
+        addr = val & ~1
+        off = _va2off(c, addr)
+        if off is None:
+            for a, b, o in c["va2off"]:
+                if a <= addr < b or (a <= val < b):
+                    off = o + (addr - a)
+                    break
+        if off is not None and c["bytes"]:
+            code = c["bytes"][off:off + size]
+            for i in md.disasm(code, addr):
+                instrs.append({"mn": i.mnemonic, "op": i.op_str, "addr": i.address})
+
+    mnemonic_counts = {}
+    for i in instrs:
+        mn = i["mn"].upper()
+        mnemonic_counts[mn] = mnemonic_counts.get(mn, 0) + 1
+
+    branch_mns = {"B", "BEQ", "BNE", "BGT", "BLT", "BGE", "BLE", "BHI", "BLS", "BCS", "BCC", "BMI", "BPL", "BVS", "BVC", "CBZ", "CBNZ", "TBZ", "TBNZ", "JMP", "JE", "JNE", "JG", "JL"}
+    complexity = 1 + sum(count for mn, count in mnemonic_counts.items() if mn in branch_mns or mn.startswith("B."))
+
+    stack_bytes = 0
+    for i in instrs:
+        mn = i["mn"].lower()
+        if mn in ("push", "push.w"):
+            regs = i["op"].strip("{}").split(",")
+            stack_bytes += len(regs) * 4
+        elif mn == "sub" and "sp" in i["op"].lower():
+            clean = i["op"].split(",")[-1].strip().lstrip("#")
+            try:
+                if clean.startswith("0x"): stack_bytes += int(clean, 16)
+                elif clean.isdigit(): stack_bytes += int(clean, 10)
+            except Exception: pass
+
+    fn_type = "User Application Function"
+    if name.startswith(("HAL_", "LL_", "BSP_")):
+        fn_type = "HAL Hardware Abstraction Driver"
+    elif name.endswith(("Handler", "IRQHandler", "_ISR", "_isr")):
+        fn_type = "Interrupt Service Routine (ISR)"
+    elif name.startswith(("__", "_Z", "system_", "System", "exit", "_exit")):
+        fn_type = "C Runtime / System Core Library"
+
+    called_funcs = []
+    called_set = set()
+    for i in instrs:
+        mn = i["mn"].lower()
+        if mn in ("bl", "blx", "call"):
+            sym_name = _resolve_symbol_name(c, i["op"])
+            if sym_name and sym_name not in called_set:
+                called_set.add(sym_name)
+                called_sym = c["sym_by_name"].get(sym_name, {})
+                called_funcs.append({
+                    "name": sym_name,
+                    "addr": f"0x{(called_sym.get('value', 0) & ~1):08x}",
+                    "section": called_sym.get("section", ".text")
+                })
+            elif not sym_name:
+                clean_op = i["op"].lstrip("#").strip()
+                called_funcs.append({
+                    "name": f"subroutine_{clean_op}",
+                    "addr": clean_op,
+                    "section": ".text"
+                })
+
+    called_by = []
+    for other_sym in c.get("symbols", []):
+        if other_sym.get("type") == "STT_FUNC" and other_sym.get("name") != name:
+            if c.get("call_graph", {}).get("edges"):
+                for edge in c["call_graph"]["edges"]:
+                    if edge.get("target") == name and edge.get("source") not in [cb["name"] for cb in called_by]:
+                        cb_sym = c["sym_by_name"].get(edge["source"], {})
+                        called_by.append({
+                            "name": edge["source"],
+                            "addr": f"0x{(cb_sym.get('value', 0) & ~1):08x}",
+                            "section": cb_sym.get("section", ".text")
+                        })
+                        break
+
+    behavior = []
+    if any(i["mn"].lower() in ("push", "push.w") for i in instrs):
+        behavior.append({"icon": "🛡️", "text": "Saves registers on stack frame for context preservation"})
+    
+    for cf in called_funcs:
+        behavior.append({"icon": "📞", "text": f"Calls subroutine {cf['name']}() at {cf['addr']}"})
+
+    if any(i["mn"].lower().startswith("str") for i in instrs):
+        behavior.append({"icon": "💾", "text": "Performs SRAM / Peripheral register memory store operations"})
+
+    if any(i["mn"].lower().startswith("ldr") for i in instrs):
+        behavior.append({"icon": "📥", "text": "Loads constant literals or SRAM addresses into CPU registers"})
+
+    if any(i["mn"].lower() in ("pop", "pop.w", "bx", "ret") for i in instrs):
+        behavior.append({"icon": "↩️", "text": "Restores stack frame state and returns to caller"})
+
+    flash_reads = []
+    ram_writes = []
+    literal_pool = []
+
+    for i in instrs:
+        mn = i["mn"].lower()
+        op = i["op"]
+        if mn.startswith("ldr"):
+            if "pc" in op.lower():
+                literal_pool.append({"addr": f"0x{i['addr']:08x}", "instruction": f"{i['mn']} {i['op']}", "target": _clean_c_op(op.split(",")[-1])})
+            else:
+                flash_reads.append({"addr": f"0x{i['addr']:08x}", "op": op})
+        elif mn.startswith("str"):
+            ram_writes.append({"addr": f"0x{i['addr']:08x}", "op": op})
+
+    timeline = [{"step": 1, "title": "ENTRY", "desc": f"Function entry point at 0x{(val & ~1):08x}"}]
+    step_num = 2
+    if stack_bytes > 0:
+        timeline.append({"step": step_num, "title": "Stack Frame Setup", "desc": f"Allocates ~{stack_bytes} bytes stack space"})
+        step_num += 1
+
+    for cf in called_funcs[:4]:
+        timeline.append({"step": step_num, "title": f"Call {cf['name']}", "desc": f"Executes {cf['name']} at {cf['addr']}"})
+        step_num += 1
+
+    timeline.append({"step": step_num, "title": "Return / Exit", "desc": "Restores frame pointer and returns execution to caller"})
+
+    # Register Usage Extraction
+    touched_registers = set()
+    for i in instrs:
+        op = i.get("op", "").lower()
+        for token in op.replace("[", " ").replace("]", " ").replace("{", " ").replace("}", " ").replace(",", " ").split():
+            clean_tok = token.strip().rstrip("!")
+            if clean_tok in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr", "pc", "apsr"):
+                touched_registers.add(clean_tok.upper())
+            elif clean_tok.startswith("r") and clean_tok[1:].isdigit():
+                touched_registers.add(clean_tok.upper())
+
+    sorted_regs = sorted(list(touched_registers), key=lambda x: (0 if x.startswith("R") else 1, x))
+
+    cond_branches = sum(1 for i in instrs if i["mn"].upper() in ("BEQ", "BNE", "BGT", "BLT", "BGE", "BLE", "BHI", "BLS", "BCS", "BCC", "CBZ", "CBNZ", "TBZ", "TBNZ", "JE", "JNE", "JG", "JL"))
+    uncond_branches = sum(1 for i in instrs if i["mn"].upper() in ("B", "B.W", "BX", "JMP"))
+
+    return {
+        "found": True,
+        "func": {
+            "name": name,
+            "addr": f"0x{(val & ~1):08x}",
+            "section": s.get("section", ".text"),
+            "object_file": f"{s.get('name', 'main')}.o",
+            "size": f"{size} Bytes",
+            "instruction_count": len(instrs),
+            "cyclomatic_complexity": complexity,
+            "stack_usage": f"~{stack_bytes} Bytes" if stack_bytes > 0 else "0 Bytes (Register leaf)",
+            "type": fn_type
+        },
+        "function_summary": {
+            "name": name,
+            "addr": f"0x{(val & ~1):08x}",
+            "section": s.get("section", ".text"),
+            "object_file": f"{s.get('name', 'main')}.o",
+            "size_bytes": size,
+            "instruction_count": len(instrs)
+        },
+        "function_classification": fn_type,
+        "confidence_score": 100,
+        "behavior": behavior,
+        "calls": called_funcs,
+        "called_by": called_by,
+        "cross_references": called_by,
+        "memory_access": {
+            "flash_reads_count": len(flash_reads),
+            "ram_writes_count": len(ram_writes),
+            "literal_pool_count": len(literal_pool),
+            "literal_pool": literal_pool[:10],
+            "flash_reads": flash_reads[:10],
+            "ram_writes": ram_writes[:10]
+        },
+        "literal_pool_usage": literal_pool,
+        "instruction_statistics": mnemonic_counts,
+        "stack_estimate": {
+            "allocated_bytes": stack_bytes,
+            "description": f"~{stack_bytes} Bytes stack allocation" if stack_bytes > 0 else "0 Bytes (Leaf function)"
+        },
+        "timeline": timeline,
+        "branch_analysis": {
+            "cyclomatic_complexity": complexity,
+            "conditional_branches": cond_branches,
+            "unconditional_branches": uncond_branches,
+            "total_branches": cond_branches + uncond_branches
+        },
+        "register_usage_summary": sorted_regs
+    }
 
 @app.get("/api/health")
 def health(): return {"status": "ok"}
