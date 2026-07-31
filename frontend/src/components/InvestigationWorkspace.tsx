@@ -451,17 +451,39 @@ export default function InvestigationWorkspace({
                   <div className="flex-1 overflow-y-auto p-4 mono text-xs leading-relaxed select-text font-mono bg-[#03060a]">
                     <div className="space-y-0.5 max-w-4xl">
                       {displaySourceLines.map((line, idx) => {
+                        const txt = line.text || "";
+                        const trimmed = txt.trim();
+                        const isComment = trimmed.startsWith("//");
+                        const callMatch = txt.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\(\);(.*)$/);
+
                         return (
                           <div
                             key={idx}
-                            className="flex items-start gap-4 px-2 py-0.5 rounded hover:bg-white/5 text-gray-200 transition font-mono"
+                            className="flex items-start gap-4 px-2 py-0.5 rounded hover:bg-white/5 transition font-mono"
                           >
                             <span className="w-8 text-right text-[11px] text-gray-600 select-none flex-shrink-0 font-mono pt-0.5">
                               {line.num}
                             </span>
-                            <pre className="font-mono whitespace-pre-wrap flex-1 leading-normal text-[12px] text-emerald-300">
-                              {line.text}
-                            </pre>
+                            <div className="font-mono flex-1 leading-normal text-[12px]">
+                              {isComment ? (
+                                <span className="text-gray-500 italic">{txt}</span>
+                              ) : callMatch ? (
+                                <span>
+                                  <span>{callMatch[1]}</span>
+                                  <button
+                                    onClick={() => onSelectSymbol({ name: callMatch[2] })}
+                                    title={`Click to jump to function ${callMatch[2]}()`}
+                                    className="text-cyan-300 font-bold hover:underline hover:text-white transition bg-cyan-500/10 px-1 py-0.5 rounded border border-cyan-500/20"
+                                  >
+                                    {callMatch[2]}
+                                  </button>
+                                  <span className="text-emerald-400 font-bold">();</span>
+                                  {callMatch[3] && <span className="text-gray-500 italic ml-2">{callMatch[3]}</span>}
+                                </span>
+                              ) : (
+                                <span className="text-emerald-300 font-mono">{txt}</span>
+                              )}
+                            </div>
                           </div>
                         );
                       })}

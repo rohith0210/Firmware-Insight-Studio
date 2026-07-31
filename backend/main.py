@@ -469,16 +469,26 @@ def _simulate_execution(instrs: List[dict], entry_addr: int, c: dict) -> dict:
 # RECOVERED PSEUDO-C DECOMPILER ENGINE
 def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict) -> dict:
     name = sym.get("name", "subroutine")
+def _get_human_comment(csym: str) -> str:
+    if csym.startswith("HAL_Init"): return "// Initialize STM32 HAL library"
+    if csym.startswith("SystemClock_Config"): return "// Configure system clock"
+    if csym.startswith("MX_GPIO_Init"): return "// Initialize GPIO peripherals"
+    if "USART" in csym or "UART" in csym: return "// Initialize UART serial interface"
+    if "ADC" in csym: return "// Initialize ADC analog interface"
+    if "DMA" in csym: return "// Initialize DMA controller"
+    if "TIM" in csym: return "// Initialize hardware timer"
+    if "SPI" in csym: return "// Initialize SPI bus"
+    if "I2C" in csym: return "// Initialize I2C bus"
+    if "RCC" in csym: return "// Reset and Clock Control configuration"
+    if "Delay" in csym: return "// Delay function"
+    return ""
+
+def _decompile_function(name: str, instrs: List[dict], c: dict, has_dwarf: bool) -> dict:
+    sym = c.get("sym_by_name", {}).get(name, {})
     val = sym.get("value", 0) & ~1
-    size = sym.get("size", 0)
-    
-    has_dwarf = name in dwarf_info.get("subprograms", {})
-    sp_dwarf = dwarf_info.get("subprograms", {}).get(name, {})
-    
-    decl_file = sp_dwarf.get("filename", f"{name}.c")
-    decl_line = sp_dwarf.get("decl_line", 1)
-    
-    lines = []
+    size = sym.get("size", len(instrs) * 2 if instrs else 0)
+    decl_file = sym.get("compilation_unit", f"{name}.c")
+    decl_line = 1
     
     lines = []
     line_counter = 1
@@ -521,7 +531,7 @@ def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict
         for expr, desc in mmio_accesses[:6]:
             lines.append({
                 "num": line_counter,
-                "text": f"    {expr} = 0x1;",
+                "text": f"    {expr} = 0x1; // {desc}",
                 "confidence": 90,
                 "evidence": desc
             })
@@ -531,17 +541,34 @@ def _decompile_function(c: dict, sym: dict, instrs: List[dict], dwarf_info: dict
 
     if calls_made:
         for csym in calls_made:
+            hc = _get_human_comment(csym)
+            if hc:
+                lines.append({
+                    "num": line_counter,
+                    "text": f"    {hc}",
+                    "confidence": 100,
+                    "evidence": "Human Comment"
+                })
+                line_counter += 1
             lines.append({
                 "num": line_counter,
                 "text": f"    {csym}();",
                 "confidence": 100,
-                "evidence": "Function Call"
+                "evidence": "Function Call",
+                "called_func": csym
             })
             line_counter += 1
-        lines.append({"num": line_counter, "text": "", "confidence": 100, "evidence": "Layout"})
-        line_counter += 1
+            lines.append({"num": line_counter, "text": "", "confidence": 100, "evidence": "Layout"})
+            line_counter += 1
 
     if name == "main":
+        lines.append({
+            "num": line_counter,
+            "text": "    // Main application loop",
+            "confidence": 100,
+            "evidence": "Human Comment"
+        })
+        line_counter += 1
         lines.append({
             "num": line_counter,
             "text": "    while (1)",
