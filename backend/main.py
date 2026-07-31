@@ -9,7 +9,15 @@ from elftools.elf.sections import SymbolTableSection
 from elftools.elf.relocation import RelocationSection
 
 app = FastAPI(title="Firmware Insight Studio API")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://firmware-insight-studio.vercel.app",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 _CACHE: "OrderedDict[str, dict]" = OrderedDict()
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "fis_elf_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
