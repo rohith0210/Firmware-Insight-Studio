@@ -34,7 +34,7 @@ export default function SourceViewer({ result, targetSymbol, onNavigateView }: P
     if (!symbolName) return;
     setLoading(true);
     const checksum = result.checksum;
-    const apiBase = window.location.port === "5173" ? "http://localhost:8000" : "";
+    const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
     const url = checksum
       ? `${apiBase}/api/source?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(symbolName)}`
       : `${apiBase}/api/source?name=${encodeURIComponent(symbolName)}`;

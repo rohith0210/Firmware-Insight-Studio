@@ -95,7 +95,7 @@ export default function InvestigationWorkspace({
   } | null>(null);
   const [loadingSource, setLoadingSource] = useState<boolean>(false);
 
-  const apiBase = window.location.port === "5173" ? "http://localhost:8000" : "";
+  const apiBase = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "http://localhost:8000" : "");
 
   useEffect(() => {
     if (!activeSym || !activeSym.name) return;
