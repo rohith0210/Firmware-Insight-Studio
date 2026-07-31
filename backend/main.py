@@ -618,6 +618,28 @@ def disasm(checksum: str = Query(default=""), name: str = Query(default="main"))
     
     s = c["sym_by_name"].get(name)
     if not s:
+        # Try clean address parsing (e.g., #0x8000160 or 0x08000160 or 0x8000160)
+        target_addr = _parse_addr(name)
+        if target_addr is not None:
+            addr_clean = target_addr & ~1
+            for sym in c["symbols"]:
+                v = sym.get("value", 0) & ~1
+                sz = sym.get("size", 0)
+                if v == addr_clean or (sz > 0 and v <= addr_clean < v + sz):
+                    s = sym
+                    name = sym.get("name", f"sub_{addr_clean:08x}")
+                    break
+            if not s:
+                s = {
+                    "name": f"sub_{addr_clean:08x}",
+                    "value": addr_clean,
+                    "size": 64,
+                    "type": "STT_FUNC",
+                    "bind": "STB_LOCAL",
+                    "section": ".text"
+                }
+
+    if not s:
         candidates = [sym for sym in c["symbols"] if sym.get("type") == "STT_FUNC" or sym.get("section") == ".text"]
         if candidates:
             s = candidates[0]
@@ -931,6 +953,27 @@ def get_analysis(checksum: str = Query(default=""), name: str = Query(default="m
         raise HTTPException(404, "binary not in cache — re-upload it")
 
     s = c["sym_by_name"].get(name)
+    if not s:
+        target_addr = _parse_addr(name)
+        if target_addr is not None:
+            addr_clean = target_addr & ~1
+            for sym in c["symbols"]:
+                v = sym.get("value", 0) & ~1
+                sz = sym.get("size", 0)
+                if v == addr_clean or (sz > 0 and v <= addr_clean < v + sz):
+                    s = sym
+                    name = sym.get("name", f"sub_{addr_clean:08x}")
+                    break
+            if not s:
+                s = {
+                    "name": f"sub_{addr_clean:08x}",
+                    "value": addr_clean,
+                    "size": 64,
+                    "type": "STT_FUNC",
+                    "bind": "STB_LOCAL",
+                    "section": ".text"
+                }
+
     if not s:
         candidates = [sym for sym in c["symbols"] if sym.get("type") == "STT_FUNC" or sym.get("section") == ".text"]
         if candidates:
