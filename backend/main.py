@@ -291,8 +291,14 @@ def _arch_config(em):
 def _arch_map(em):
     cfg = _arch_config(em)
     if not cfg: return None, None
-    try: import capstone as cs
-    except Exception: return None, cfg
+    try:
+        import capstone as cs
+    except Exception as e:
+        import traceback
+        print(f"CAPSTONE IMPORT FAILED: {e}")
+        traceback.print_exc()
+        return None, cfg
+
     machine = str(em).upper()
     if machine in ("EM_ARM", "40"): return cs.CS_ARCH_ARM, {**cfg, "mode": cs.CS_MODE_ARM}
     if machine in ("EM_AARCH64", "183"): return cs.CS_ARCH_ARM64, {**cfg, "mode": 0}
