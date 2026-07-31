@@ -132,15 +132,27 @@ export default function Disassembler({
     }
   };
 
-  // Auto-scroll disassembly view to active PC line
+  // Auto-scroll disassembly view to active PC line & Auto-follow PC across function boundaries
   useEffect(() => {
-    if (pc !== null && activePcRef.current) {
-      activePcRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
+    if (pc !== null) {
+      if (activePcRef.current) {
+        activePcRef.current.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }
+      // Auto-follow live hardware PC across function boundaries
+      if (isLiveDebug && dis && dis.instructions && dis.instructions.length > 0) {
+        const pcClean = pc & ~1;
+        const inView = dis.instructions.some(i => (i.addr & ~1) === pcClean);
+        if (!inView) {
+          const targetHex = `0x${pcClean.toString(16).padStart(8, "0")}`;
+          setName(targetHex);
+          push("b", `⚡ [LIVE CPU BRANCH] Auto-following PC to target address ${targetHex}...`);
+        }
+      }
     }
-  }, [pc]);
+  }, [pc, isLiveDebug, dis]);
 
   const push = (c: Log["c"], t: string) => {
     setLog(prev => [...prev, { c, t }]);
