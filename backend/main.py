@@ -1046,32 +1046,53 @@ def _arch_map(em):
     if hasattr(cs, "CS_ARCH_RISCV") and machine in ("EM_RISCV", "243"): return cs.CS_ARCH_RISCV, {**cfg, "mode": getattr(cs, "CS_MODE_RISCV32", 0)}
     return None, cfg
 
-def _resolve_symbol_name(c: dict, target_str: str) -> Optional[str]:
+def resolve_symbol_full(c: dict, target_str: str) -> dict:
     if not target_str or not isinstance(target_str, str):
-        return None
+        return {
+            "name": "unknown_subroutine",
+            "normalized_address": "0x00000000",
+            "confidence": 0,
+            "evidence": "Invalid Target",
+            "symbol_type": "STT_NOTYPE",
+            "section": ".text",
+            "object_file": "unknown.o"
+        }
 
     clean = target_str.strip()
     if clean.startswith("#"):
         clean = clean[1:].strip()
     if "<" in clean:
-        parts = clean.split("<")
-        clean = parts[0].strip()
+        clean = clean.split("<")[0].strip()
 
+    # 1. Exact match by symbol name
     if c.get("sym_by_name") and clean in c["sym_by_name"]:
-        return clean
+        s_obj = c["sym_by_name"][clean]
+        v = s_obj.get("value", 0) & ~1
+        return {
+            "name": clean,
+            "normalized_address": f"0x{v:08x}",
+            "confidence": 100,
+            "evidence": "[Symbol Table Exact Match]",
+            "symbol_type": s_obj.get("type", "STT_FUNC"),
+            "section": s_obj.get("section", ".text"),
+            "object_file": s_obj.get("compilation_unit", "main.o")
+        }
 
-    target_addr = None
-    try:
-        if clean.startswith("0x") or clean.startswith("0X"):
-            target_addr = int(clean, 16)
-        elif clean.isdigit():
-            target_addr = int(clean, 10)
-    except ValueError:
-        return None
-
+    target_addr = _parse_addr(clean)
     if target_addr is None:
-        return None
+        return {
+            "name": clean,
+            "normalized_address": "0x00000000",
+            "confidence": 70,
+            "evidence": "[Symbol Identifier]",
+            "symbol_type": "STT_FUNC",
+            "section": ".text",
+            "object_file": "main.o"
+        }
 
+    norm_addr = target_addr & ~1
+
+    # 2. Exact match by address in symbol map
     sym_map = c.get("_sym_addr_map")
     if sym_map is None:
         sym_map = {}
@@ -1079,25 +1100,92 @@ def _resolve_symbol_name(c: dict, target_str: str) -> Optional[str]:
             s_name = sym.get("name")
             if s_name and "value" in sym:
                 v = sym["value"]
-                sym_map[v & ~1] = s_name
-                sym_map[v] = s_name
-                sym_map[v | 1] = s_name
+                sym_map[v & ~1] = sym
+                sym_map[v] = sym
+                sym_map[v | 1] = sym
         c["_sym_addr_map"] = sym_map
 
-    exact = sym_map.get(target_addr & ~1) or sym_map.get(target_addr) or sym_map.get(target_addr | 1)
-    if exact:
-        return exact
+    exact_sym = sym_map.get(norm_addr) or sym_map.get(target_addr)
+    if exact_sym:
+        s_name = exact_sym.get("name")
+        return {
+            "name": s_name,
+            "normalized_address": f"0x{norm_addr:08x}",
+            "confidence": 100,
+            "evidence": "[Symbol Table Address Match]",
+            "symbol_type": exact_sym.get("type", "STT_FUNC"),
+            "section": exact_sym.get("section", ".text"),
+            "object_file": exact_sym.get("compilation_unit", "main.o")
+        }
 
-    addr = target_addr & ~1
+    # 3. DWARF subprogram match
+    dwarf_subprograms = c.get("dwarf_meta", {}).get("subprograms", {})
+    for sp_name, sp in dwarf_subprograms.items():
+        if sp.get("low_pc"):
+            try:
+                sp_pc = int(sp["low_pc"], 16) & ~1
+                if sp_pc == norm_addr:
+                    return {
+                        "name": sp_name,
+                        "normalized_address": f"0x{norm_addr:08x}",
+                        "confidence": 98,
+                        "evidence": "[DWARF Subprogram low_pc Match]",
+                        "symbol_type": "STT_FUNC",
+                        "section": ".text",
+                        "object_file": sp.get("filename", "main.c")
+                    }
+            except ValueError:
+                pass
+
+    # 4. Relocations match
+    relocations = c.get("memory_map", {}).get("relocations", [])
+    for rel in relocations:
+        rel_off = _parse_addr(str(rel.get("offset", "")))
+        if rel_off is not None and (rel_off & ~1) == norm_addr:
+            r_sym = rel.get("symbol")
+            if r_sym:
+                return {
+                    "name": r_sym,
+                    "normalized_address": f"0x{norm_addr:08x}",
+                    "confidence": 95,
+                    "evidence": "[ELF Relocation Reference]",
+                    "symbol_type": "STT_FUNC",
+                    "section": ".got",
+                    "object_file": "reloc.o"
+                }
+
+    # 5. Enclosing function range match
     for sym in c.get("symbols", []):
         s_name = sym.get("name")
         v = sym.get("value", 0) & ~1
         sz = sym.get("size", 0)
-        if s_name and sz > 0 and v <= addr < (v + sz):
-            off = addr - v
-            return s_name if off == 0 else f"{s_name}+0x{off:x}"
+        if s_name and sz > 0 and v <= norm_addr < (v + sz):
+            off = norm_addr - v
+            res_name = s_name if off == 0 else f"{s_name}+0x{off:x}"
+            return {
+                "name": res_name,
+                "normalized_address": f"0x{norm_addr:08x}",
+                "confidence": 90,
+                "evidence": "[Enclosing Function Range]",
+                "symbol_type": sym.get("type", "STT_FUNC"),
+                "section": sym.get("section", ".text"),
+                "object_file": sym.get("compilation_unit", "main.o")
+            }
 
-    return None
+    # 6. Fallback: sub_08000414
+    return {
+        "name": f"sub_{norm_addr:08x}",
+        "normalized_address": f"0x{norm_addr:08x}",
+        "confidence": 50,
+        "evidence": "[Address Fallback]",
+        "symbol_type": "STT_FUNC",
+        "section": ".text",
+        "object_file": "unknown.o"
+    }
+
+def _resolve_symbol_name(c: dict, target_str: str) -> Optional[str]:
+    res = resolve_symbol_full(c, target_str)
+    return res.get("name")
 
 def _clean_c_op(op_str: str) -> str:
     if not op_str:
