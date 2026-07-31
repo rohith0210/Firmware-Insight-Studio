@@ -86,9 +86,44 @@ export default function Disassembler({
   const timerRef = useRef<number | null>(null);
   const activePcRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => { pcRef.current = pc; }, [pc]);
-  useEffect(() => { bpsRef.current = bps; }, [bps]);
-  useEffect(() => { disRef.current = dis; }, [dis]);
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const connectLocalAgent = () => {
+    try {
+      push("m", "🔌 [LOCAL AGENT] Attempting handshake with Local Debug Agent at ws://127.0.0.1:9001...");
+      const ws = new WebSocket("ws://127.0.0.1:9001");
+      ws.onopen = () => {
+        setWsConnected(true);
+        setIsLiveDebug(true);
+        wsRef.current = ws;
+        push("a", "🟢 [LOCAL AGENT CONNECTED] Hardware Debugger Agent active on ws://127.0.0.1:9001 (ST-Link / OpenOCD:3333)");
+        ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
+      };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if ((msg.type === "REGISTERS" || msg.type === "STEP_COMPLETE") && msg.data) {
+            setRegs(prev => ({ ...prev, ...msg.data }));
+            if (msg.data.PC) {
+              setPc(msg.data.PC);
+              pcRef.current = msg.data.PC;
+            }
+          }
+        } catch (e) {}
+      };
+      ws.onerror = () => {
+        setWsConnected(false);
+        push("m", "🟡 [LOCAL AGENT OFFLINE] Could not connect to ws://127.0.0.1:9001. Start local agent: python debug-agent/fis_debug_agent.py");
+      };
+      ws.onclose = () => {
+        setWsConnected(false);
+        wsRef.current = null;
+      };
+    } catch (e) {
+      setWsConnected(false);
+    }
+  };
 
   // Auto-scroll disassembly view to active PC line
   useEffect(() => {
@@ -451,6 +486,19 @@ export default function Disassembler({
               </div>
             )}
           </div>
+
+          {/* LOCAL AGENT HANDSHAKE BUTTON */}
+          <button
+            onClick={connectLocalAgent}
+            title="Connect to Local Debug Agent (ws://127.0.0.1:9001) for live ST-Link hardware stepping"
+            className={`mono text-xs px-2.5 py-1 rounded border font-bold transition flex items-center gap-1.5 ${
+              wsConnected
+                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
+                : "bg-cyan-500/10 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20"
+            }`}
+          >
+            <span>{wsConnected ? "🟢 Local Agent Active" : "🔌 Connect Local Agent"}</span>
+          </button>
         </div>
 
         {/* DEBUGGER CONTROLS (ONLY ACTIVE IN LIVE DEBUG MODE) */}
