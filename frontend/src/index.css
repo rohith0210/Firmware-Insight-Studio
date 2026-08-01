@@ -169,3 +169,31 @@ body{margin:0;color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;b
 .fragrow{display:grid;grid-template-columns:repeat(24,1fr);gap:2px}
 .fragcell{height:22px;border-radius:2px;transition:background .12s}
 @media(max-width:860px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.side .brand,.side .foot,.nav-grp .lbl{display:none}.nav-grp{display:flex;padding:8px}.memmap{grid-template-columns:1fr}.spec{grid-template-columns:1fr}.fragrow{grid-template-columns:repeat(16,1fr)}}
+
+/* ReactFlow Dark Theme Overrides */
+.react-flow__controls {
+  background: #090e14 !important;
+  border: 1px solid rgba(51, 214, 194, 0.3) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+}
+.react-flow__controls-button {
+  background: #090e14 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  fill: #94a8ba !important;
+  color: #94a8ba !important;
+}
+.react-flow__controls-button:hover {
+  background: #111a24 !important;
+  fill: #33d6c4 !important;
+  color: #33d6c4 !important;
+}
+.react-flow__minimap {
+  background: #090e14 !important;
+  border: 1px solid rgba(51, 214, 194, 0.3) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+}
+.react-flow__minimap-mask {
+  fill: rgba(0, 0, 0, 0.75) !important;
+}

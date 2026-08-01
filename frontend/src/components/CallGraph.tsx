@@ -119,18 +119,18 @@ const getSymbolInfo = (symbols: ParseResult["symbols"], label: string) => symbol
 const runDagreLayout = (nodes: RenderNode[], edges: RenderEdge[], direction: "TB" | "LR") => {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: direction, nodesep: 45, ranksep: 80, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: direction, nodesep: 25, ranksep: 40, marginx: 15, marginy: 15 });
   nodes.forEach((node) => {
-    const width = Number(node.style?.width ?? 180);
-    const height = Number(node.style?.height ?? 72);
+    const width = Number(node.style?.width ?? 150);
+    const height = Number(node.style?.height ?? 50);
     g.setNode(node.id, { width, height });
   });
   edges.forEach((edge) => g.setEdge(edge.source, edge.target));
   dagre.layout(g);
   return nodes.map((node) => {
     const { x, y } = g.node(node.id) as { x: number; y: number };
-    const width = Number(node.style?.width ?? 180);
-    const height = Number(node.style?.height ?? 72);
+    const width = Number(node.style?.width ?? 150);
+    const height = Number(node.style?.height ?? 50);
     return { ...node, position: { x: x - width / 2, y: y - height / 2 } };
   });
 };
@@ -139,17 +139,25 @@ const FunctionNode = ({ data, selected }: NodeProps<FunctionData>) => {
   const meta = CATEGORY_META[data.category];
   return (
     <div
-      className={`cg-node ${selected ? "selected ring-2 ring-white" : ""}`}
-      style={{ borderLeftColor: meta.accent, background: meta.fill }}
+      className={`px-2.5 py-1.5 rounded border text-left shadow-lg transition-all duration-150 ${
+        selected ? "ring-2 ring-[var(--a)] shadow-[0_0_16px_rgba(51,214,194,0.4)] border-white" : "border-[#1e293b] hover:border-gray-500"
+      }`}
+      style={{
+        borderLeftWidth: "3px",
+        borderLeftColor: meta.accent,
+        background: "linear-gradient(180deg, #0d131c, #090e15)",
+        minWidth: "150px",
+        maxWidth: "180px",
+      }}
       title={`${data.name}\nSection: ${data.section} · Size: ${formatBytes(data.size)}\nCallers: ${data.callersCount} · Callees: ${data.calleesCount}`}
     >
-      <div className="cg-node-header flex items-center justify-between gap-1">
-        <span className="cg-node-icon">{data.icon}</span>
-        <span className="cg-node-title truncate font-bold text-xs">{data.name}</span>
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[11px]">{data.icon}</span>
+        <span className="truncate font-mono font-bold text-[11px] text-gray-100 flex-1">{data.name}</span>
       </div>
-      <div className="cg-node-footer flex items-center justify-between text-[10px] opacity-90 mt-1">
-        <span className="cg-node-badge font-mono px-1 rounded bg-black/40 text-[9px]">{data.section || ".text"}</span>
-        <span className="cg-node-size font-mono font-semibold">{formatBytes(data.size)}</span>
+      <div className="flex items-center justify-between text-[9px] opacity-90 mt-1 pt-1 border-t border-white/5 font-mono">
+        <span className="px-1 rounded bg-black/60 text-gray-400 border border-white/5">{data.section || ".text"}</span>
+        <span className="font-semibold" style={{ color: meta.accent }}>{formatBytes(data.size)}</span>
       </div>
     </div>
   );
@@ -227,7 +235,7 @@ export default function CallGraph({
         type: "functionCard",
         draggable: false,
         position: { x: 0, y: 0 },
-        style: { width: 190, height: 72, cursor: "pointer" },
+        style: { width: 150, height: 50, cursor: "pointer" },
         data: {
           name: node.label,
           section: symbol.section || ".text",
@@ -452,6 +460,15 @@ export default function CallGraph({
             <option value="radial">Radial Flow Map</option>
             <option value="orthogonal">Orthogonal Grid</option>
           </select>
+
+          {/* FIT VIEW BUTTON */}
+          <button
+            onClick={() => reactFlow.current?.fitView({ padding: 0.15, duration: 400 })}
+            className="px-2.5 py-1 bg-[rgba(51,214,194,0.15)] border border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black rounded text-xs font-bold transition flex items-center gap-1 shadow-sm"
+            title="Recenter and fit call graph inside viewport"
+          >
+            <span>🔍 Fit View</span>
+          </button>
         </div>
       </div>
 
