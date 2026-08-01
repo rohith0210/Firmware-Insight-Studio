@@ -30,11 +30,16 @@ type FunctionData = {
   callersCount: number;
   calleesCount: number;
   riskScore: number;
+  isExpanded?: boolean;
+  onToggleExpand?: (name: string) => void;
 };
 
 type RenderNode = Node<FunctionData>;
 type RenderEdge = Edge;
 type TraceEvent = { ts: number; message: string; level: "info" | "action" | "warning" };
+
+const defaultSymbol = { name: "unknown", value: 0, size: 0, type: "unknown", bind: "unknown", section: ".text" };
+const getSymbolInfo = (symbols: ParseResult["symbols"], label: string) => symbols.find(sym => sym.name === label) || defaultSymbol;
 
 const CATEGORY_META: Record<NodeCategory, { accent: string; fill: string; label: string; icon: string }> = {
   Application: { accent: "#3ddbd8", fill: "rgba(61,219,216,.12)", label: "Application", icon: "📡" },
@@ -61,24 +66,12 @@ const detectArchitecture = (result: ParseResult, device?: Device): string => {
 
 // Architecture-Agnostic Category Classification
 const inferAgnosticCategory = (name: string): NodeCategory => {
-  // Interrupts & Exceptions across Cortex-M, RISC-V, Xtensa, AVR, 8051
-  if (/IRQ|IRQHandler|Handler$|ISR_|__vector_|trap_vector|_vector$/i.test(name)) return "Interrupts";
-  
-  // Entry & Boot sequence routines across Linux, RTOS, ARM, RISC-V, Xtensa, AVR
+  if (/IRQ|IRQHandler|Handler$|ISR_|__vector_|_vector$/i.test(name)) return "Interrupts";
   if (/^(Reset_Handler|reset_handler|SystemInit|_start|__libc_start_main|crt0|main|app_main|board_init|setup_arch|start_kernel|init_hart|__init)$/i.test(name)) return "Startup";
-
-  // RTOS Task Creation & Kernel Interfacing (FreeRTOS, Zephyr, ThreadX, VxWorks, Pthreads)
   if (/(FreeRTOS|vTask|xTask|k_thread|tx_thread|pthread|osThread|cmsis_os|vTaskStartScheduler|taskSpawn)/i.test(name)) return "RTOS/Tasks";
-
-  // Peripheral Drivers & Hardware Abstraction
   if (/^(HAL_|LL_|BSP_|esp_|avr_|nrfx_|(?:GPIO|UART|USART|SPI|I2C|ADC|DAC|DMA|TIM|USB|CAN|ETH|TWIM|PWM)_[A-Za-z])/i.test(name)) return "Drivers";
-
-  // Shared Libraries, Middleware, Network, Cryptography
   if (/(mbedtls|zlib|libc|libm|__libc|fopen|fread|printf|scanf|snprintf|vsnprintf|lwip|tcp_|udp_|mqtt|fatfs|usb_device)/i.test(name)) return "Libraries";
-
-  // C Runtime Helpers
   if (/^(__|_aeabi|memcpy|memset|strlen|strcpy|malloc|free|abort|exit|__do_copy_data|__do_clear_bss)/i.test(name)) return "Runtime";
-
   return "Application";
 };
 
@@ -113,9 +106,6 @@ const calculateRiskScore = (size: number, callers: number, callees: number) => {
   return Math.min(99, score);
 };
 
-const defaultSymbol = { name: "unknown", value: 0, size: 0, type: "unknown", bind: "unknown", section: ".text" };
-const getSymbolInfo = (symbols: ParseResult["symbols"], label: string) => symbols.find(sym => sym.name === label) || defaultSymbol;
-
 const runDagreLayout = (nodes: RenderNode[], edges: RenderEdge[], direction: "TB" | "LR") => {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -137,9 +127,11 @@ const runDagreLayout = (nodes: RenderNode[], edges: RenderEdge[], direction: "TB
 
 const FunctionNode = ({ data, selected }: NodeProps<FunctionData>) => {
   const meta = CATEGORY_META[data.category];
+  const hasCallees = data.calleesCount > 0;
+
   return (
     <div
-      className={`px-2.5 py-1.5 rounded border text-left shadow-lg transition-all duration-150 ${
+      className={`px-2.5 py-1.5 rounded border text-left shadow-lg transition-all duration-150 relative ${
         selected ? "ring-2 ring-[var(--a)] shadow-[0_0_16px_rgba(51,214,194,0.4)] border-white" : "border-[#1e293b] hover:border-gray-500"
       }`}
       style={{
@@ -154,6 +146,22 @@ const FunctionNode = ({ data, selected }: NodeProps<FunctionData>) => {
       <div className="flex items-center justify-between gap-1">
         <span className="text-[11px]">{data.icon}</span>
         <span className="truncate font-mono font-bold text-[11px] text-gray-100 flex-1">{data.name}</span>
+        {hasCallees && data.onToggleExpand && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onToggleExpand?.(data.name);
+            }}
+            className={`mono text-[9px] px-1 py-0.2 rounded font-bold transition ml-1 ${
+              data.isExpanded
+                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/40"
+                : "bg-[var(--a-dim)]/40 text-[var(--a)] border border-[var(--a-dim)] hover:bg-[var(--a)] hover:text-black"
+            }`}
+            title={data.isExpanded ? "Collapse callbacks" : `Expand ${data.calleesCount} callback(s)`}
+          >
+            {data.isExpanded ? "−" : `+${data.calleesCount}`}
+          </button>
+        )}
       </div>
       <div className="flex items-center justify-between text-[9px] opacity-90 mt-1 pt-1 border-t border-white/5 font-mono">
         <span className="px-1 rounded bg-black/60 text-gray-400 border border-white/5">{data.section || ".text"}</span>
@@ -193,6 +201,25 @@ export default function CallGraph({
   const [bottomTab, setBottomTab] = useState<BottomTab>("Trace");
   const [maxDepth, setMaxDepth] = useState<number>(8);
   const [hideOrphans, setHideOrphans] = useState<boolean>(false);
+
+  // Interactive Tree Expansion State
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
+    return new Set(["main", "Reset_Handler", "_start", "app_main"]);
+  });
+
+  const toggleExpandNode = useCallback((nodeName: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeName)) {
+        next.delete(nodeName);
+      } else {
+        next.add(nodeName);
+      }
+      return next;
+    });
+    setTimeout(() => reactFlow.current?.fitView({ padding: 0.15, duration: 300 }), 50);
+  }, []);
+
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([
     { ts: Date.now(), message: "Architecture-agnostic Firmware Flow Explorer initialized.", level: "info" },
   ]);
@@ -249,10 +276,12 @@ export default function CallGraph({
           callersCount,
           calleesCount,
           riskScore,
+          isExpanded: expandedNodes.has(node.label),
+          onToggleExpand: toggleExpandNode,
         },
       } as RenderNode;
     });
-  }, [data.nodes, result.symbols, symbolsByName, degrees]);
+  }, [data.nodes, result.symbols, symbolsByName, degrees, expandedNodes, toggleExpandNode]);
 
   const allEdges = useMemo<RenderEdge[]>(() => {
     return data.edges.map((edge) => {
@@ -278,12 +307,12 @@ export default function CallGraph({
     });
   }, [availableNodes, data.edges]);
 
-  // Mode & Filter Logic
+  // Mode & Filter Logic: Breadth-First Expansion from Root Entry Point
   const filteredNodes = useMemo(() => {
     return availableNodes.filter((node) => {
       // 1. Search Query
-      if (search && !node.data.name.toLowerCase().includes(search.toLowerCase()) && !node.data.section.toLowerCase().includes(search.toLowerCase())) {
-        return false;
+      if (search) {
+        return node.data.name.toLowerCase().includes(search.toLowerCase()) || node.data.section.toLowerCase().includes(search.toLowerCase());
       }
       // 2. Category Filter
       if (selectedCategory !== "all" && node.data.category !== selectedCategory) {
@@ -309,9 +338,19 @@ export default function CallGraph({
       if (graphMode === "library" && node.data.category !== "Libraries" && node.data.category !== "Runtime") {
         return false;
       }
+
+      // 5. Collapsible Branch Filtering: Show Entry Points + Callees of Expanded Nodes
+      if (graphMode === "calls" && selectedCategory === "all" && !search) {
+        const isRoot = /^(Reset_Handler|_start|entry|main|app_main|SystemInit)$/i.test(node.data.name) || node.data.name === baseEntry;
+        const isCallerExpanded = data.edges.some((e) => e.target === node.id && expandedNodes.has(e.source));
+        const isSelfExpanded = expandedNodes.has(node.id);
+        const isEntryChild = data.edges.some((e) => e.target === node.id && e.source === baseEntry);
+        return isRoot || isCallerExpanded || isSelfExpanded || isEntryChild;
+      }
+
       return true;
     });
-  }, [availableNodes, search, selectedCategory, hideOrphans, graphMode]);
+  }, [availableNodes, search, selectedCategory, hideOrphans, graphMode, baseEntry, data.edges, expandedNodes]);
 
   const visibleIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
   const filteredEdges = useMemo(() => {
