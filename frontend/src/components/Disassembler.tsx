@@ -338,29 +338,34 @@ export default function Disassembler({
     return () => clearInterval(interval);
   }, [status, isLiveDebug, dis, pc]);
 
-  // RESET TARGET
+  // RESET TARGET (Resets MCU target & jumps directly to main() / main.c)
   const handleReset = () => {
     setStatus("halted");
+    const mainSym = result.symbols?.find(s => s.name === "main") || result.symbols?.find(s => s.name === "Reset_Handler");
+    const mainName = mainSym ? mainSym.name : "main";
+    const mainAddr = mainSym ? mainSym.value : 0x080001c5;
+
+    setName(mainName);
+    setPc(mainAddr);
+    pcRef.current = mainAddr;
+    setRegs(prev => ({
+      ...prev,
+      PC: mainAddr,
+      SP: 0x20004000,
+      LR: 0x080001b1,
+      R0: 0x00000000,
+      R1: 0x00000000,
+      R2: 0x00000000,
+      R3: 0x00000000,
+    }));
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
       wsRef.current.send(JSON.stringify({ type: "RESET" }));
-      push("a", "↺ Target Reset (monitor reset halt)");
+      push("a", `↺ Target Reset (monitor reset halt) ➔ Jumped directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
       return;
     }
 
-    const resetAddr = (dis && dis.func ? dis.func.addr : (result.symbols.find(s => s.name === name)?.value || 0x080001c5));
-    setPc(resetAddr);
-    pcRef.current = resetAddr;
-    setRegs(prev => ({
-      ...prev,
-      PC: resetAddr,
-      SP: 0x20004000,
-      LR: 0x080001b1,
-      R0: 0x20000100,
-      R1: 0x00000000,
-      R2: 0x40021000,
-      R3: 0x00000001,
-    }));
-    push("a", `↺ [OFFLINE RESET] PC reset to 0x${resetAddr.toString(16).padStart(8, "0")}`);
+    push("a", `↺ [RESET TARGET] Reset MCU target ➔ Switched view directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
   };
 
   const toggleBp = (addr: number) => {
