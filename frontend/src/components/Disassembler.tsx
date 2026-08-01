@@ -122,6 +122,9 @@ export default function Disassembler({
             if (msg.data.PC !== undefined) {
               setPc(msg.data.PC);
               pcRef.current = msg.data.PC;
+              if (msg.type === "STEP_COMPLETE") {
+                push("a", `⚡ [LIVE HARDWARE STEP] PC ➔ 0x${msg.data.PC.toString(16).padStart(8, "0")}`);
+              }
             }
             if (msg.type === "HALTED" || msg.type === "RESET_COMPLETE" || msg.type === "STEP_COMPLETE") {
               setStatus("halted");

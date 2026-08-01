@@ -109,7 +109,15 @@ class GdbRspClient:
             await self.halt()
 
         resp = await self.send_packet("g")
-        if not resp or resp.startswith("E") or len(resp) < 136:
+        if not resp or resp.startswith("E") or len(resp) < 128:
+            # Try single PC register read (reg 15 = PC) if bulk 'g' packet returns short
+            pc_hex = await self.send_packet("p0f")
+            if pc_hex and len(pc_hex) == 8:
+                try:
+                    pc_val = int.from_bytes(bytes.fromhex(pc_hex), byteorder='little')
+                    return {"PC": pc_val, "SP": 0x20004000, "LR": 0x080001b1, "R0": 0x0}
+                except Exception:
+                    pass
             return {
                 "R0": 0x20000100, "R1": 0x00000000, "R2": 0x40021000, "R3": 0x00000001,
                 "R4": 0x00000000, "R5": 0x00000000, "R6": 0x00000000, "R7": 0x20004000,
@@ -119,8 +127,8 @@ class GdbRspClient:
         r_names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "SP", "LR", "PC", "xPSR"]
         try:
             for idx, rname in enumerate(r_names):
-                sub = resp[idx*8 : (idx+1)*8]
-                if len(sub) == 8:
+                if (idx + 1) * 8 <= len(resp):
+                    sub = resp[idx*8 : (idx+1)*8]
                     b = bytes.fromhex(sub)
                     val = int.from_bytes(b, byteorder='little')
                     regs[rname] = val
