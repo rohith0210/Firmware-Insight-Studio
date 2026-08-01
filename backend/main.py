@@ -833,6 +833,18 @@ def parse_elf(path: str) -> dict:
             except Exception:
                 pass
 
+    # Explicit Microcontroller Startup Call Lineage Resolution
+    reset_fn = next((s['name'] for s in text_funcs if re.match(r'^(Reset_Handler|_start|reset_handler|entry)$', s['name'], re.I)), None)
+    sysinit_fn = next((s['name'] for s in text_funcs if re.match(r'^(SystemInit|board_init|setup_arch)$', s['name'], re.I)), None)
+    main_fn = next((s['name'] for s in text_funcs if s['name'] in ("main", "app_main")), None)
+
+    if reset_fn and sysinit_fn and reset_fn in nodes_map and sysinit_fn in nodes_map:
+        edges_set.add((reset_fn, sysinit_fn))
+    if sysinit_fn and main_fn and sysinit_fn in nodes_map and main_fn in nodes_map:
+        edges_set.add((sysinit_fn, main_fn))
+    elif reset_fn and main_fn and reset_fn in nodes_map and main_fn in nodes_map:
+        edges_set.add((reset_fn, main_fn))
+
     # Relocation fallback for sparse symbols
     for rel in relocations[:80]:
         sym_name = rel.get("symbol")

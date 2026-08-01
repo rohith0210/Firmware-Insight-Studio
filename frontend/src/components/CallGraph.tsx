@@ -375,14 +375,15 @@ export default function CallGraph({
     return runDagreLayout(filteredNodes, filteredEdges, layoutMode === "orthogonal" ? "LR" : "TB");
   }, [filteredNodes, filteredEdges, layoutMode, baseEntry]);
 
-  // Handle Selection & Synchronization
+  // Handle Selection & Synchronization: Clicking any node expands its callback tree
   const handleSelectNode = useCallback((node: RenderNode) => {
     setSelectedNode(node.id);
+    toggleExpandNode(node.data.name);
     setTraceEvents((events) => [
       ...events.slice(-19),
       { ts: Date.now(), message: `Inspecting ${node.data.name} (${node.data.section})`, level: "action" },
     ]);
-  }, []);
+  }, [toggleExpandNode]);
 
   // Handle incoming navigation targets
   useEffect(() => {
