@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
 import { getApiBaseUrl } from "../apiConfig";
+import { VirtualExecutionEngine, type StackFrame } from "../utils/VirtualExecutionEngine";
 
 type Instr = { addr: number; bytes: string; mn: string; op: string; t: string[]; w: string[] };
 type Dis = {
@@ -56,14 +57,16 @@ export default function Disassembler({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [funcSearch, setFuncSearch] = useState("");
 
-  // CPU Registers State
+  // CPU Registers & Virtual Execution Engine State
+  const [callStack, setCallStack] = useState<StackFrame[]>(() => {
+    const initEngine = VirtualExecutionEngine.getInstance().createInitialState(result?.symbols || []);
+    return initEngine.callStack;
+  });
+
   const [pc, setPc] = useState<number | null>(null);
-  const [regs, setRegs] = useState<Record<string, number>>({
-    R0: 0x20000100, R1: 0x00000000, R2: 0x40021000, R3: 0x00000001,
-    R4: 0x00000000, R5: 0x00000000, R6: 0x00000000, R7: 0x20004000,
-    R8: 0x00000000, R9: 0x00000000, R10: 0x00000000, R11: 0x00000000,
-    R12: 0x00000000, SP: 0x20004000, LR: 0x080001b1, PC: 0x08000180,
-    xPSR: 0x61000000, PRIMASK: 0x00000000,
+  const [regs, setRegs] = useState<Record<string, number>>(() => {
+    const initEngine = VirtualExecutionEngine.getInstance().createInitialState(result?.symbols || []);
+    return initEngine.registers;
   });
   const [status, setStatus] = useState<Status>("idle");
   const [steps] = useState(0);
@@ -287,6 +290,18 @@ export default function Disassembler({
         const targetStr = currInstr.op.split(" ")[0].replace(/[<>]/g, "");
         const targetSym = result.symbols?.find(s => s.name === targetStr);
         if (targetSym) {
+          const newFrame: StackFrame = {
+            id: `frame_${Date.now()}`,
+            funcName: targetSym.name,
+            entryAddr: targetSym.value,
+            callerName: name,
+            callerAddr: currentPc,
+            returnAddr: currentPc + 4,
+            localVars: [
+              { name: "arg0", type: "uint32_t", address: "0x20000008", val: `0x${(regs.R0 || 0).toString(16)}` }
+            ]
+          };
+          setCallStack(prev => [...prev, newFrame]);
           setName(targetSym.name);
           setPc(targetSym.value);
           pcRef.current = targetSym.value;
@@ -296,6 +311,24 @@ export default function Disassembler({
         }
       }
       handleStepOver();
+    }
+  };
+
+  // STEP OUT (Pop call stack frame & return to LR)
+  const handleStepOut = () => {
+    if (callStack.length > 1) {
+      const topFrame = callStack[callStack.length - 1];
+      const prevStack = callStack.slice(0, callStack.length - 1);
+      setCallStack(prevStack);
+      const parentFrame = prevStack[prevStack.length - 1];
+      const returnPc = topFrame.returnAddr;
+      setName(parentFrame.funcName);
+      setPc(returnPc);
+      pcRef.current = returnPc;
+      setRegs(prev => ({ ...prev, PC: returnPc }));
+      push("b", `⤴ [STEP OUT] Returned to ${parentFrame.funcName} @ 0x${returnPc.toString(16)}`);
+    } else {
+      push("m", "Already at top frame of Call Stack.");
     }
   };
 
@@ -342,19 +375,12 @@ export default function Disassembler({
     const mainName = mainSym ? mainSym.name : "main";
     const mainAddr = mainSym ? mainSym.value : 0x080001c5;
 
+    const resetEngine = VirtualExecutionEngine.getInstance().createInitialState(result.symbols || []);
+    setCallStack(resetEngine.callStack);
     setName(mainName);
     setPc(mainAddr);
     pcRef.current = mainAddr;
-    setRegs(prev => ({
-      ...prev,
-      PC: mainAddr,
-      SP: 0x20004000,
-      LR: 0x080001b1,
-      R0: 0x00000000,
-      R1: 0x00000000,
-      R2: 0x00000000,
-      R3: 0x00000000,
-    }));
+    setRegs(resetEngine.registers);
 
     push("a", `↺ [RESET TARGET] Reset target ➔ Switched view directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
   };
@@ -512,6 +538,19 @@ export default function Disassembler({
             }`}
           >
             <span>⤶ Step Into</span>
+          </button>
+
+          <button
+            onClick={handleStepOut}
+            disabled={status === "running"}
+            title="Step Out (return to caller function at LR)"
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+              status === "running"
+                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                : "bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20 text-purple-300 shadow-sm"
+            }`}
+          >
+            <span>⤴ Step Out</span>
           </button>
 
           <button
@@ -733,40 +772,42 @@ export default function Disassembler({
             </div>
           )}
 
-          {/* STACK INSPECTOR PANE */}
+          {/* STACK & LOCAL VARIABLE INSPECTOR PANE */}
           {rightTab === "stack" && (
             <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-3 mono text-xs">
               <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
-                <span>Call Stack / Frames</span>
-                <span className="text-[var(--a)]">Active Frame</span>
+                <span>Call Stack & Local Variables</span>
+                <span className="text-cyan-400 font-bold">{callStack.length} Frame(s)</span>
               </div>
               <div className="space-y-2">
-                <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-amber-400 font-bold text-sm">🟡</span>
-                    <div>
-                      <div className="font-bold text-amber-300 text-xs">{name}</div>
-                      <div className="text-[10px] text-gray-400">PC: 0x{(pc || 0).toString(16).padStart(8, "0")}</div>
-                    </div>
-                  </div>
-                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">FRAME #0</span>
-                </div>
-
-                {regs.LR && regs.LR !== 0xffffffff ? (
-                  <>
-                    <div className="text-center text-gray-500 text-[10px] font-bold">↓</div>
-                    <div className="p-2.5 rounded bg-black/40 border border-white/10 flex items-center justify-between">
+                {callStack.slice().reverse().map((frame, idx) => (
+                  <div key={frame.id} className="p-2.5 rounded bg-black/50 border border-white/10 space-y-2">
+                    <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
-                        <span className="text-gray-400 font-bold text-sm">⚪</span>
+                        <span className="text-amber-400 font-bold text-xs">{idx === 0 ? "🟢" : "⚪"}</span>
                         <div>
-                          <div className="font-bold text-gray-300 text-xs">caller_subroutine</div>
-                          <div className="text-[10px] text-gray-400">LR: 0x{(regs.LR || 0).toString(16).padStart(8, "0")}</div>
+                          <div className="font-bold text-cyan-300 text-xs">{frame.funcName}</div>
+                          <div className="text-[10px] text-gray-400">Called from: {frame.callerName} @ 0x{frame.callerAddr.toString(16)}</div>
                         </div>
                       </div>
-                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-gray-400 text-[9px] font-bold">FRAME #1</span>
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                        FRAME #{callStack.length - 1 - idx}
+                      </span>
                     </div>
-                  </>
-                ) : null}
+
+                    {frame.localVars && frame.localVars.length > 0 && (
+                      <div className="pt-2 border-t border-white/10 space-y-1">
+                        <div className="text-[9px] font-bold text-gray-500 uppercase">LOCAL VARIABLES & SCOPE</div>
+                        {frame.localVars.map(v => (
+                          <div key={v.name} className="flex justify-between items-center text-[10px] bg-black/40 p-1.5 rounded border border-white/5">
+                            <span className="text-gray-300 font-bold">{v.type} <strong className="text-cyan-300">{v.name}</strong></span>
+                            <span className="text-amber-300 font-mono font-bold">{v.val} <span className="text-gray-500 text-[9px]">({v.address})</span></span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
 
                 <div className="pt-2 border-t border-[var(--line)] text-[10px] text-gray-400 flex justify-between items-center">
                   <span>Stack Pointer (SP):</span>
