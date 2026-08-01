@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import type { ParseResult } from "../App";
 import { DebuggerEngine, type DebuggerStateSnapshot } from "../utils/DebuggerEngine";
 import { getApiBaseUrl } from "../apiConfig";
-import HardwareSetupModal from "./HardwareSetupModal";
 
 type Props = {
   result: ParseResult;
@@ -29,7 +28,6 @@ export default function InvestigationWorkspace({
   const [rightTab, setRightTab] = useState<RightTab>("registers");
   const [search, setSearch] = useState("");
   const [splitView, setSplitView] = useState<boolean>(false);
-  const [showSetupModal, setShowSetupModal] = useState<boolean>(false);
 
   // Single Source of Truth - Debugger Engine Snapshot
   const [snapshot, setSnapshot] = useState<DebuggerStateSnapshot>(() =>
@@ -234,16 +232,13 @@ export default function InvestigationWorkspace({
         <div className="flex items-center gap-3">
           {/* Hardware Connection Status */}
           {isLive ? (
-            <button
-              onClick={() => setShowSetupModal(true)}
-              className="flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-            >
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span>🟢 LIVE GDB AGENT CONNECTED</span>
-            </button>
+            </div>
           ) : (
             <button
-              onClick={() => setShowSetupModal(true)}
+              onClick={() => DebuggerEngine.getInstance().connect()}
               className="flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition bg-white/5 border border-white/10 text-gray-300 hover:border-[var(--a)] hover:text-white"
             >
               <span>🔌 Connect Hardware Agent (GDB)</span>
@@ -654,16 +649,6 @@ export default function InvestigationWorkspace({
           </span>
         </div>
       </footer>
-
-      {/* Hardware Setup Modal */}
-      <HardwareSetupModal
-        isOpen={showSetupModal}
-        onClose={() => setShowSetupModal(false)}
-        onConnected={() => {
-          setShowSetupModal(false);
-          DebuggerEngine.getInstance().connect();
-        }}
-      />
     </div>
   );
 }

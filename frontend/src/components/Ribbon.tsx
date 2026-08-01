@@ -3,7 +3,6 @@ import type { ParseResult } from "../App";
 import type { Device } from "../utils/devices";
 import DeviceSelectorModal from "./DeviceSelectorModal";
 import DeviceDashboardModal from "./DeviceDashboardModal";
-import HardwareSetupModal from "./HardwareSetupModal";
 
 export default function Ribbon({
   title,
@@ -34,7 +33,6 @@ export default function Ribbon({
 }) {
   const [showSelector, setShowSelector] = useState(false);
   const [showSpecs, setShowSpecs] = useState(false);
-  const [showSetupModal, setShowSetupModal] = useState(false);
 
   return (
     <div className="ribbon">
@@ -52,15 +50,6 @@ export default function Ribbon({
           <kbd className="px-1.5 py-0.2 rounded bg-white/10 text-[9px] text-gray-400 font-mono">Ctrl+K</kbd>
         </button>
       )}
-
-      {/* LIVE HARDWARE SETUP GUIDE BUTTON */}
-      <button
-        onClick={() => setShowSetupModal(true)}
-        className="px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-cyan-300 text-xs font-bold transition flex items-center gap-1.5 mono"
-        title="Live Hardware Debugger Setup Guide & Diagnostics"
-      >
-        <span>⚡ Setup Guide</span>
-      </button>
 
       <span className="spacer" />
 
@@ -113,11 +102,7 @@ export default function Ribbon({
         {loading ? "parsing" : "idle"}
       </span>
 
-      {/* HARDWARE SETUP MODAL */}
-      <HardwareSetupModal
-        isOpen={showSetupModal}
-        onClose={() => setShowSetupModal(false)}
-      />
+
 
       {/* DEVICE SELECTOR MODAL */}
       {showSelector && device && (

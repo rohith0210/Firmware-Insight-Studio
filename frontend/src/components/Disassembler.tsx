@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParseResult } from "../App";
 import { getApiBaseUrl } from "../apiConfig";
-import HardwareSetupModal from "./HardwareSetupModal";
 
 type Instr = { addr: number; bytes: string; mn: string; op: string; t: string[]; w: string[] };
 type Dis = {
@@ -77,7 +76,7 @@ export default function Disassembler({
   const activePcRef = useRef<HTMLDivElement | null>(null);
 
   const [wsConnected, setWsConnected] = useState<boolean>(false);
-  const [showAgentModal, setShowAgentModal] = useState<boolean>(false);
+
   const wsRef = useRef<WebSocket | null>(null);
   const disasmCacheRef = useRef<Map<string, Dis>>(new Map());
 
@@ -111,7 +110,6 @@ export default function Disassembler({
       ws.onopen = () => {
         setWsConnected(true);
         setIsLiveDebug(true);
-        setShowAgentModal(false);
         wsRef.current = ws;
         push("a", "🟢 [CONNECTED] Live Debugger active (ST-Link / OpenOCD:3333)");
         ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
@@ -138,7 +136,6 @@ export default function Disassembler({
       ws.onerror = () => {
         setWsConnected(false);
         setIsLiveDebug(false);
-        setShowAgentModal(true);
         push("e", "🔴 [DISCONNECTED] Could not reach Local Debug Agent on ws://127.0.0.1:9001.");
       };
 
@@ -150,7 +147,6 @@ export default function Disassembler({
     } catch (e) {
       setWsConnected(false);
       setIsLiveDebug(false);
-      setShowAgentModal(true);
     }
   };
 
@@ -992,13 +988,6 @@ export default function Disassembler({
           />
         </form>
       </div>
-
-      {/* HARDWARE SETUP & DIAGNOSTICS GUIDE MODAL */}
-      <HardwareSetupModal
-        isOpen={showAgentModal}
-        onClose={() => setShowAgentModal(false)}
-        onConnected={connectLocalAgent}
-      />
     </div>
   );
 }
