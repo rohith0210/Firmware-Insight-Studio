@@ -39,19 +39,23 @@ class GdbRspClient:
         self.writer = None
         self.connected = False
         self.is_running = False
+        self.lock = asyncio.Lock()
 
     async def connect(self):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self.connected = True
             self.is_running = False
-            # Initial GDB RSP handshake expected by OpenOCD
-            self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
-            await self.writer.drain()
-            try:
-                _ = await asyncio.wait_for(self.reader.read(128), timeout=1.0)
-            except Exception:
-                pass
+            
+            async with self.lock:
+                # Initial GDB RSP handshake expected by OpenOCD
+                self.writer.write(b"+$qSupported:multiprocess+;swbreak+;hwbreak+#0c")
+                await self.writer.drain()
+                try:
+                    _ = await asyncio.wait_for(self.reader.read(256), timeout=1.0)
+                except Exception:
+                    pass
+
             print(f"[+] Connected to GDB Server at {self.host}:{self.port}")
             # Start background heartbeat to keep OpenOCD keep_alive happy
             asyncio.create_task(self._keepalive_loop())
@@ -62,14 +66,12 @@ class GdbRspClient:
             return False
 
     async def _keepalive_loop(self):
-        """Send periodic GDB RSP heartbeat packets every 400ms to prevent OpenOCD keep_alive warnings."""
+        """Send periodic GDB RSP query packet every 800ms to keep OpenOCD keep_alive happy."""
         while self.connected:
-            await asyncio.sleep(0.4)
-            if self.connected and not self.is_running and self.writer:
+            await asyncio.sleep(0.8)
+            if self.connected and not self.is_running and not self.lock.locked():
                 try:
-                    # Send empty ACK + keep-alive query
-                    self.writer.write(b"+")
-                    await self.writer.drain()
+                    await self.send_packet("qC")
                 except Exception:
                     pass
 
@@ -77,31 +79,30 @@ class GdbRspClient:
         if not self.connected or not self.writer:
             return ""
         
-        try:
-            if hasattr(self.reader, '_buffer') and self.reader._buffer:
-                self.reader._buffer.clear()
-        except Exception:
-            pass
+        async with self.lock:
+            try:
+                # GDB RSP format: $<data>#<checksum>
+                chk = sum(data.encode('latin-1')) % 256
+                pkt = f"${data}#{chk:02x}"
+                self.writer.write(pkt.encode('latin-1'))
+                await self.writer.drain()
+                
+                # Wait for response packet starting with '$' or '+'
+                raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
+                _ = await asyncio.wait_for(self.reader.read(2), timeout=0.5)
+                
+                # Send '+' ACK back to OpenOCD
+                self.writer.write(b"+")
+                await self.writer.drain()
 
-        chk = sum(data.encode('latin-1')) % 256
-        pkt = f"${data}#{chk:02x}"
-        self.writer.write(pkt.encode('latin-1'))
-        await self.writer.drain()
-        
-        try:
-            raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
-            _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
-            self.writer.write(b"+")
-            await self.writer.drain()
-
-            text = raw.decode('latin-1')
-            if '$' in text:
-                text = text.split('$', 1)[1]
-            if '#' in text:
-                text = text.split('#', 1)[0]
-            return text.strip()
-        except Exception as e:
-            return ""
+                text = raw.decode('latin-1')
+                if '$' in text:
+                    text = text.split('$', 1)[1]
+                if '#' in text:
+                    text = text.split('#', 1)[0]
+                return text.strip()
+            except Exception as e:
+                return ""
 
     async def get_registers(self):
         if self.is_running:
