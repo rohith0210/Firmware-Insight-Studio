@@ -53,24 +53,36 @@ class GdbRspClient:
             except Exception:
                 pass
             print(f"[+] Connected to GDB Server at {self.host}:{self.port}")
+            # Start background heartbeat to keep OpenOCD keep_alive happy
+            asyncio.create_task(self._keepalive_loop())
             return True
         except Exception as e:
             print(f"[-] Failed to connect to GDB Server ({self.host}:{self.port}): {e}")
             self.connected = False
             return False
 
+    async def _keepalive_loop(self):
+        """Send periodic GDB RSP heartbeat packets every 400ms to prevent OpenOCD keep_alive warnings."""
+        while self.connected:
+            await asyncio.sleep(0.4)
+            if self.connected and not self.is_running and self.writer:
+                try:
+                    # Send empty ACK + keep-alive query
+                    self.writer.write(b"+")
+                    await self.writer.drain()
+                except Exception:
+                    pass
+
     async def send_packet(self, data: str) -> str:
         if not self.connected or not self.writer:
             return ""
         
-        # Flush any leftover bytes in reader buffer
         try:
             if hasattr(self.reader, '_buffer') and self.reader._buffer:
                 self.reader._buffer.clear()
         except Exception:
             pass
 
-        # GDB RSP format: $<data>#<checksum>
         chk = sum(data.encode('latin-1')) % 256
         pkt = f"${data}#{chk:02x}"
         self.writer.write(pkt.encode('latin-1'))
@@ -79,7 +91,6 @@ class GdbRspClient:
         try:
             raw = await asyncio.wait_for(self.reader.readuntil(b'#'), timeout=3.0)
             _ = await asyncio.wait_for(self.reader.read(2), timeout=1.0)
-            # Send '+' ACK back to OpenOCD to acknowledge packet reception
             self.writer.write(b"+")
             await self.writer.drain()
 
@@ -90,7 +101,6 @@ class GdbRspClient:
                 text = text.split('#', 1)[0]
             return text.strip()
         except Exception as e:
-            print(f"[-] RSP Read Timeout/Error for '${data}': {e}")
             return ""
 
     async def get_registers(self):
