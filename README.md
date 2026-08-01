@@ -238,3 +238,27 @@ Open `http://localhost:5173`, drop your microcontroller `.elf` binary, and explo
 ## 📜 License
 
 Distributed under the **MIT License**. See `LICENSE` for details.
+
+---
+
+<br/>
+
+<p align="center">
+  <h2 align="center">Found this useful?</h2>
+</p>
+
+<p align="center">
+  <a href="https://github.com/rohith0210/Firmware-Insight-Studio"><img src="https://img.shields.io/badge/⭐_STAR_THE_REPO-f1c40f?style=for-the-badge&logoColor=white" alt="Star The Repo"/></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/rohith0210/Firmware-Insight-Studio/fork"><img src="https://img.shields.io/badge/🍴_FORK_IT-e74c3c?style=for-the-badge&logoColor=white" alt="Fork It"/></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/rohith0210/Firmware-Insight-Studio/issues"><img src="https://img.shields.io/badge/🐛_OPEN_AN_ISSUE-1abc9c?style=for-the-badge&logoColor=white" alt="Open An Issue"/></a>
+</p>
+
+<br/>
+
+<p align="center">
+  <strong>Firmware Insight Studio</strong> · built with 🟩🟨🟥 by <a href="https://github.com/rohith0210"><strong>rohith0210</strong></a>
+  <br/><br/>
+  <em>If Firmware Insight Studio saved you hours of debugging or freed up Flash/RAM for you, a ⭐ goes a long way.</em>
+</p>
