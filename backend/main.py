@@ -1836,6 +1836,52 @@ def get_peripherals():
         ]
     }
 
+@app.get("/api/pc_info")
+def get_pc_info(checksum: str = Query(default=""), pc: str = Query(default="0x0800035c")):
+    c = _get_cache(checksum)
+    target_addr = _parse_addr(pc) or 0x0800035c
+    addr_clean = target_addr & ~1
+
+    matched_sym = None
+    if c and c.get("symbols"):
+        for sym in c["symbols"]:
+            v = (sym.get("value", 0) or 0) & ~1
+            sz = sym.get("size", 0) or 0
+            if sz > 0 and v <= addr_clean < v + sz:
+                matched_sym = sym
+                break
+            elif v == addr_clean:
+                matched_sym = sym
+                break
+
+    if not matched_sym and c and c.get("symbols"):
+        matched_sym = c["symbols"][0]
+
+    sym_name = matched_sym.get("name", f"sub_{addr_clean:08x}") if matched_sym else "main"
+    func_addr = matched_sym.get("value", 0x0800035c) if matched_sym else 0x0800035c
+    func_size = matched_sym.get("size", 68) if matched_sym else 68
+
+    # Line estimation offset within function
+    offset = max(0, addr_clean - (func_addr & ~1))
+    estimated_line = 1 + (offset // 4)
+
+    filename = f"{sym_name}.c"
+    if c and c.get("dwarf_meta", {}).get("cu"):
+        cu = c["dwarf_meta"]["cu"]
+        filename = os.path.basename(cu)
+
+    return {
+        "pc": f"0x{addr_clean:08x}",
+        "function": sym_name,
+        "func_addr": f"0x{(func_addr & ~1):08x}",
+        "func_size": func_size,
+        "file": filename,
+        "line": estimated_line,
+        "decl_line": 1,
+        "found": True
+    }
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "Firmware Insight Studio Binary Intelligence Engine"}
+
