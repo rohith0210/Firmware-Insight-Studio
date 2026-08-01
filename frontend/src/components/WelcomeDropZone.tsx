@@ -53,29 +53,7 @@ export default function WelcomeDropZone({ onFileParsed }: Props) {
     }
   };
 
-  const handleSampleLoad = async (sampleName: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const apiBase = getApiBaseUrl();
-      const res = await fetch(`${apiBase}/api/sample?name=${encodeURIComponent(sampleName)}`);
-      if (!res.ok) {
-        // Fetch sample file directly if sample endpoint not available
-        const blobRes = await fetch(`/${sampleName}`);
-        if (!blobRes.ok) throw new Error("Sample file not found in public workspace");
-        const blob = await blobRes.blob();
-        const file = new File([blob], sampleName, { type: "application/octet-stream" });
-        await uploadFile(file);
-        return;
-      }
-      const data: ParseResult = await res.json();
-      onFileParsed(data);
-    } catch (err: any) {
-      setError(err.message || `Could not load sample ${sampleName}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-[#05080c] text-white p-6 font-sans select-none">
@@ -110,14 +88,14 @@ export default function WelcomeDropZone({ onFileParsed }: Props) {
             type="file"
             ref={fileInputRef}
             onChange={e => e.target.files?.[0] && uploadFile(e.target.files[0])}
-            accept=".elf,.axf,.out,.bin,.hex"
+            accept=".elf,.axf,.out,.bin,.hex,.o,.c,.cpp,.h,.hpp,.zip"
             className="hidden"
           />
 
           {loading ? (
             <div className="flex flex-col items-center space-y-3">
               <div className="w-10 h-10 border-2 border-[var(--a)] border-t-transparent rounded-full animate-spin" />
-              <span className="font-mono text-sm text-[var(--a)]">Parsing ELF & DWARF Metadata...</span>
+              <span className="font-mono text-sm text-[var(--a)]">Parsing Binary & DWARF Metadata...</span>
             </div>
           ) : (
             <>
@@ -126,10 +104,10 @@ export default function WelcomeDropZone({ onFileParsed }: Props) {
               </div>
               <div className="space-y-1">
                 <h3 className="text-lg font-bold text-white font-mono">
-                  Drop your firmware ELF binary here
+                  Drop your microcontroller binary or project here
                 </h3>
                 <p className="text-xs text-gray-400 font-mono">
-                  Supports ARM, RISC-V, ESP32 binaries (.elf, .axf, .out, .hex, .bin)
+                  Supports ARM, RISC-V, ESP32 binaries & source (.elf, .axf, .out, .hex, .bin, .c, .cpp, .zip)
                 </p>
               </div>
               <button
@@ -148,26 +126,7 @@ export default function WelcomeDropZone({ onFileParsed }: Props) {
           </div>
         )}
 
-        {/* QUICK SAMPLE LOADERS */}
-        <div className="w-full pt-4 border-t border-white/10 flex flex-col items-center space-y-3">
-          <span className="text-xs font-mono text-gray-500 uppercase tracking-wider font-bold">
-            Or Quick-Start With Baseline Firmware Samples
-          </span>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleSampleLoad("v1.elf")}
-              className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:border-[var(--a)] text-xs font-mono text-gray-300 hover:text-white transition flex items-center gap-2"
-            >
-              <span>⚡ Load Baseline Sample v1.elf</span>
-            </button>
-            <button
-              onClick={() => handleSampleLoad("v2.elf")}
-              className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:border-purple-400 text-xs font-mono text-gray-300 hover:text-white transition flex items-center gap-2"
-            >
-              <span>⚙ Load Baseline Sample v2.elf</span>
-            </button>
-          </div>
-        </div>
+
 
         {/* FEATURE BADGES */}
         <div className="grid grid-cols-4 gap-4 w-full pt-6 text-left font-mono text-xs">
