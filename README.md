@@ -1,18 +1,59 @@
+<!-- ░░░░░░░░░░░░░░░░░░░░░░░░░░░  FIRMWARE INSIGHT STUDIO v2.0  ░░░░░░░░░░░░░░░░░░░░░░░░░░░ -->
+
+<div align="center">
+
+<h1 align="center">Firmware Insight Studio v2.0</h1>
+
 <p align="center">
-  <h1 align="center">Firmware Insight Studio v2.0</h1>
-  <p align="center">
-    <strong>A Desktop-Class Embedded Firmware Replay &amp; Introspection IDE</strong><br/>
-    Build a professional desktop-class embedded engineering application that happens to run in a browser.
-  </p>
-  <p align="center">
-    <a href="https://github.com/rohith0210/Firmware-Insight-Studio/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/></a>
-    <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI"/></a>
-    <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" alt="React"/></a>
-    <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript"/></a>
-    <a href="http://www.capstone-engine.org/"><img src="https://img.shields.io/badge/Capstone-5.0-orange" alt="Capstone"/></a>
-    <a href="https://pypi.org/project/pyelftools/"><img src="https://img.shields.io/badge/pyelftools-0.31-blue" alt="pyelftools"/></a>
-  </p>
+  <strong>A Desktop-Class Embedded Firmware Replay &amp; Introspection IDE</strong><br/>
+  <em>Build a professional desktop-class embedded engineering application that happens to run in a browser.</em>
 </p>
+
+<!-- primary CTAs -->
+<a href="https://github.com/rohith0210/Firmware-Insight-Studio"><img src="https://img.shields.io/github/stars/rohith0210/Firmware-Insight-Studio?style=for-the-badge&label=Star&labelColor=0b1220&color=fbbf24" alt="Stars"></a>&nbsp;
+<a href="https://github.com/rohith0210/Firmware-Insight-Studio/fork"><img src="https://img.shields.io/github/forks/rohith0210/Firmware-Insight-Studio?style=for-the-badge&label=Fork&labelColor=0b1220&color=f43f5e" alt="Forks"></a>&nbsp;
+<a href="https://github.com/rohith0210/Firmware-Insight-Studio/issues"><img src="https://img.shields.io/github/issues/rohith0210/Firmware-Insight-Studio?style=for-the-badge&label=Issues&labelColor=0b1220&color=2dd4bf" alt="Issues"></a>
+
+<br><br>
+
+<!-- platform & tech stack badges -->
+<img src="https://img.shields.io/badge/Linux-0b1220?style=flat-square&logo=linux&logoColor=white" alt="Linux">
+<img src="https://img.shields.io/badge/macOS-0b1220?style=flat-square&logo=apple&logoColor=white" alt="macOS">
+<img src="https://img.shields.io/badge/Windows-0b1220?style=flat-square&logo=windows&logoColor=white" alt="Windows">
+<img src="https://img.shields.io/badge/TypeScript-0b1220?style=flat-square&logo=typescript&logoColor=3178C6" alt="TypeScript">
+<img src="https://img.shields.io/badge/React_18-0b1220?style=flat-square&logo=react&logoColor=61DAFB" alt="React 18">
+<img src="https://img.shields.io/badge/FastAPI-0b1220?style=flat-square&logo=fastapi&logoColor=009688" alt="FastAPI">
+<img src="https://img.shields.io/badge/Capstone_5.0-0b1220?style=flat-square&color=2dd4bf" alt="Capstone 5.0">
+
+<br><br>
+
+<!-- quick navigation kbd pills -->
+<kbd><a href="#-engineering-vision--architecture">🏛️ Vision</a></kbd> &nbsp;
+<kbd><a href="#-product-purpose--zero-hardware-philosophy">🎯 Purpose</a></kbd> &nbsp;
+<kbd><a href="#-synchronized-workspace-panels">🧩 Panels</a></kbd> &nbsp;
+<kbd><a href="#-offline-replay--navigation">⏩ Replay</a></kbd> &nbsp;
+<kbd><a href="#-quickstart-guide">🚀 Quickstart</a></kbd> &nbsp;
+<kbd><a href="#-license">📜 License</a></kbd>
+
+</div>
+
+<br>
+
+<div align="center">
+<table>
+<tr>
+<td align="center" width="33%">🟩&nbsp;&nbsp;<b>Introspect It</b><br><sub>Flash & RAM treemaps, DWARF lines & section boundaries</sub></td>
+<td align="center" width="33%">🟨&nbsp;&nbsp;<b>Replay It</b><br><sub>Virtual PC instruction stepping, Call Lineage & Call Stack</sub></td>
+<td align="center" width="33%">🟥&nbsp;&nbsp;<b>Optimize It</b><br><sub>Reclaimable Flash calculator, dead-code & security audit</sub></td>
+</tr>
+</table>
+</div>
+
+> [!TIP]
+> **100% Local-First. Zero Hardware. Zero Telemetry.** Firmware Insight Studio runs entirely on your local machine.
+> Your firmware binaries never touch the network or leave your computer — everything is processed dynamically in-memory.
+
+<br>
 
 ---
 
