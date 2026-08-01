@@ -867,13 +867,42 @@ export default function Disassembler({
                     ]
                   },
                   {
+                    name: "GPIOC",
+                    base: "0x40011000",
+                    bus: "APB2",
+                    regs: [
+                      { name: "CRH", off: "0x04", val: "0x00300000", desc: "PC13 Output 50MHz Push-Pull" },
+                      { name: "ODR", off: "0x0C", val: "0x00002000", desc: "PC13 Output Data (Built-in LED HIGH)" }
+                    ]
+                  },
+                  {
                     name: "RCC",
                     base: "0x40021000",
                     bus: "AHB",
                     regs: [
-                      { name: "CR", off: "0x00", val: "0x03035683", desc: "Clock Control (HSE/PLL ON)" },
-                      { name: "CFGR", off: "0x04", val: "0x001D0402", desc: "Clock Configuration" },
-                      { name: "APB2ENR", off: "0x18", val: "0x0000001D", desc: "APB2 Clock Enable (IOPA|IOPB|AFIO)" }
+                      { name: "CR", off: "0x00", val: "0x03035683", desc: "Clock Control (HSE ON, PLL ON)" },
+                      { name: "CFGR", off: "0x04", val: "0x001D0402", desc: "System Clock = PLL 72MHz" },
+                      { name: "APB2ENR", off: "0x18", val: "0x0000001D", desc: "APB2 Clock Enable (IOPA|IOPB|IOPC|AFIO)" },
+                      { name: "APB1ENR", off: "0x1C", val: "0x00000001", desc: "APB1 Clock Enable (TIM2)" }
+                    ]
+                  },
+                  {
+                    name: "SysTick",
+                    base: "0xE000E010",
+                    bus: "System",
+                    regs: [
+                      { name: "CTRL", off: "0x00", val: "0x00000007", desc: "SysTick Control (Enable=1, TickInt=1)" },
+                      { name: "LOAD", off: "0x04", val: "0x0001193F", desc: "Reload Value (71,999 for 1ms Tick)" },
+                      { name: "VAL", off: "0x08", val: "0x000084B2", desc: "Current Counter Value" }
+                    ]
+                  },
+                  {
+                    name: "NVIC",
+                    base: "0xE000E100",
+                    bus: "System",
+                    regs: [
+                      { name: "ISER0", off: "0x00", val: "0x00000100", desc: "Interrupt Enable Reg (SysTick/TIM2)" },
+                      { name: "ICPR0", off: "0x180", val: "0x00000000", desc: "Interrupt Clear Pending" }
                     ]
                   },
                   {
@@ -881,9 +910,9 @@ export default function Disassembler({
                     base: "0x40013800",
                     bus: "APB2",
                     regs: [
-                      { name: "SR", off: "0x00", val: "0x000000C0", desc: "Status (TXE=1, TC=1)" },
+                      { name: "SR", off: "0x00", val: "0x000000C0", desc: "Status Reg (TXE=1, TC=1)" },
                       { name: "DR", off: "0x04", val: "0x00000055", desc: "Data Reg ('U')" },
-                      { name: "BRR", off: "0x08", val: "0x000001D4", desc: "Baud Rate 115200" }
+                      { name: "BRR", off: "0x08", val: "0x000001D4", desc: "Baud Rate 115200 (72MHz)" }
                     ]
                   },
                   {
@@ -892,7 +921,9 @@ export default function Disassembler({
                     bus: "APB1",
                     regs: [
                       { name: "CR1", off: "0x00", val: "0x00000001", desc: "Control Reg 1 (Counter ON)" },
-                      { name: "CNT", off: "0x24", val: "0x000003E8", desc: "Current Counter (1000)" }
+                      { name: "CNT", off: "0x24", val: "0x000003E8", desc: "Current Counter (1000)" },
+                      { name: "PSC", off: "0x28", val: "0x00000047", desc: "Prescaler = 71 (1MHz)" },
+                      { name: "ARR", off: "0x2C", val: "0x000003E7", desc: "Auto-reload = 999 (1kHz)" }
                     ]
                   }
                 ].map(per => (
