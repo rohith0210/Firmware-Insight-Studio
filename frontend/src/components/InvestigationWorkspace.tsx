@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import type { ParseResult } from "../App";
 import { DebuggerEngine, type DebuggerStateSnapshot } from "../utils/DebuggerEngine";
+import { getApiBaseUrl } from "../apiConfig";
 import HardwareSetupModal from "./HardwareSetupModal";
 
 type Props = {
@@ -12,7 +13,7 @@ type Props = {
 };
 
 type LeftTab = "symbols" | "objects" | "sections" | "favorites" | "recent";
-type CenterTab = "source" | "assembly" | "decompiler" | "analysis" | "hex";
+type CenterTab = "source" | "assembly" | "decompiler" | "analysis";
 type RightTab = "registers" | "stack" | "variables" | "peripherals";
 
 export default function InvestigationWorkspace({
@@ -52,8 +53,9 @@ export default function InvestigationWorkspace({
   const [gdbInput, setGdbInput] = useState("");
   const consoleBottomRef = useRef<HTMLDivElement | null>(null);
   const activePcLineRef = useRef<HTMLDivElement | null>(null);
+  const apiBase = getApiBaseUrl();
 
-  // Safe Symbols Data
+  // Safe Symbols Data from Uploaded ELF
   const symbols = useMemo(() => (result && Array.isArray(result.symbols) ? result.symbols : []), [result]);
 
   // Active Symbol Resolution
@@ -70,13 +72,14 @@ export default function InvestigationWorkspace({
     const found = symbols.find(s => s.name === symName);
     return {
       name: symName,
-      size: found ? found.size || 0 : 68,
+      value: found ? found.value : 0x08000000,
+      size: found ? found.size || 0 : 0,
       secName: found ? found.section || ".text" : ".text",
     };
   }, [selectedSymbol, symbols]);
 
   // Favorites & Recently Viewed
-  const [favorites] = useState<Set<string>>(new Set(["main", "HAL_Init"]));
+  const [favorites] = useState<Set<string>>(new Set(["main"]));
   const [recentlyViewed, setRecentlyViewed] = useState<string[]>(["main"]);
 
   useEffect(() => {
@@ -85,34 +88,106 @@ export default function InvestigationWorkspace({
     }
   }, [activeSym?.name]);
 
-  useEffect(() => {
-    consoleBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [snapshot.gdbLogs]);
+  // DYNAMIC SOURCE FETCHING FOR ACTIVE SYMBOL IN UPLOADED ELF
+  const [dynSource, setDynSource] = useState<{
+    lines: Array<{ num: number; text: string }>;
+    filename: string;
+    path: string;
+    decl_line: number;
+    found: boolean;
+  }>({
+    lines: [],
+    filename: `${activeSym.name}.c`,
+    path: "DWARF Source Recovery",
+    decl_line: 1,
+    found: false,
+  });
+  const [loadingSource, setLoadingSource] = useState<boolean>(false);
 
-  // Hotkey Listeners for Debugging (F5, F10, F11)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (!activeSym.name) return;
+    setLoadingSource(true);
+    const checksum = result?.checksum || "";
+    const url = checksum
+      ? `${apiBase}/api/source?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
+      : `${apiBase}/api/source?name=${encodeURIComponent(activeSym.name)}`;
 
-      const engine = DebuggerEngine.getInstance();
-      if (e.key === "F5") {
-        e.preventDefault();
-        if (snapshot.status === "RUNNING") engine.halt();
-        else engine.run();
-      } else if (e.key === "F10") {
-        e.preventDefault();
-        engine.stepOver();
-      } else if (e.key === "F11" && !e.shiftKey) {
-        e.preventDefault();
-        engine.stepInto();
-      } else if (e.key === "F11" && e.shiftKey) {
-        e.preventDefault();
-        engine.stepOver();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [snapshot.status]);
+    fetch(url)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data && data.lines && data.lines.length > 0) {
+          setDynSource({
+            lines: data.lines,
+            filename: data.filename || `${activeSym.name}.c`,
+            path: data.path || "Source Recovery",
+            decl_line: data.decl_line || 1,
+            found: true,
+          });
+        } else {
+          setDynSource({
+            lines: [
+              { num: 1, text: `/* Source code for function ${activeSym.name}() */` },
+              { num: 2, text: `void ${activeSym.name}(void) {` },
+              { num: 3, text: `    // Address: 0x${(activeSym.value || 0).toString(16).padStart(8, "0")} (${activeSym.size} bytes)` },
+              { num: 4, text: `    return;` },
+              { num: 5, text: `}` },
+            ],
+            filename: `${activeSym.name}.c`,
+            path: "Generated Subroutine Skeleton",
+            decl_line: 2,
+            found: false,
+          });
+        }
+        setLoadingSource(false);
+      })
+      .catch(() => {
+        setLoadingSource(false);
+      });
+  }, [activeSym.name, result?.checksum]);
+
+  // DYNAMIC DISASSEMBLY FETCHING FOR ACTIVE SYMBOL IN UPLOADED ELF
+  const [dynDisasm, setDynDisasm] = useState<Array<{ addr: number; bytes: string; mn: string; op: string }>>([]);
+  const [loadingDisasm, setLoadingDisasm] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!activeSym.name) return;
+    setLoadingDisasm(true);
+    const checksum = result?.checksum || "";
+    const url = checksum
+      ? `${apiBase}/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
+      : `${apiBase}/api/disasm?name=${encodeURIComponent(activeSym.name)}`;
+
+    fetch(url)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data && Array.isArray(data.instructions)) {
+          setDynDisasm(data.instructions);
+        } else {
+          setDynDisasm([]);
+        }
+        setLoadingDisasm(false);
+      })
+      .catch(() => {
+        setDynDisasm([]);
+        setLoadingDisasm(false);
+      });
+  }, [activeSym.name, result?.checksum]);
+
+  // Combined Active Source Lines (Live GDB step or uploaded ELF DWARF source)
+  const activeSourceLines = useMemo(() => {
+    if (snapshot.sourceLines && snapshot.sourceLines.length > 0 && snapshot.mode === "live") {
+      return snapshot.sourceLines;
+    }
+    return dynSource.lines;
+  }, [snapshot.sourceLines, snapshot.mode, dynSource.lines]);
+
+  // Combined Active Disassembly (Live GDB step or uploaded ELF Capstone disassembly)
+  const activeDisasm = useMemo(() => {
+    if (snapshot.disassembly && snapshot.disassembly.length > 0 && snapshot.mode === "live") {
+      return snapshot.disassembly;
+    }
+    return dynDisasm;
+  }, [snapshot.disassembly, snapshot.mode, dynDisasm]);
 
   // Filter symbols list
   const filteredSymbols = useMemo(() => {
@@ -149,110 +224,92 @@ export default function InvestigationWorkspace({
   };
 
   const deviceName = device?.name || "STM32F103C8 ARM Cortex-M3";
-  const isLive = snapshot.mode === "live";
+  const fileName = result?.filename || "firmware.elf";
+  const isLive = snapshot.mode === "live" && snapshot.status !== "DISCONNECTED";
 
   return (
     <div className="flex flex-col h-full bg-[#05080c] text-gray-200 select-none overflow-hidden font-sans">
-      {/* 🚀 TOP EMBEDDED IDE DEBUG TOOLBAR & HEADER */}
+      {/* 🚀 TOP EMBEDDED IDE HEADER */}
       <div className="px-4 py-2 bg-[#070b10] border-b border-[var(--line)] flex items-center justify-between mono text-xs flex-shrink-0">
         <div className="flex items-center gap-3">
-          {/* Target & Status Badge */}
-          <button
-            onClick={() => setShowSetupModal(true)}
-            className={`flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition border ${
-              snapshot.status === "CONNECTED" || snapshot.status === "HALTED"
-                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                : snapshot.status === "RUNNING"
-                ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20"
-                : "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${
-              snapshot.status === "HALTED" || snapshot.status === "CONNECTED" ? "bg-emerald-400 animate-pulse" : snapshot.status === "RUNNING" ? "bg-cyan-400 animate-spin" : "bg-red-400"
-            }`} />
-            <span>{snapshot.status === "HALTED" ? "🟢 GDB HALTED" : snapshot.status === "RUNNING" ? "⚡ TARGET RUNNING" : "🔴 AGENT DISCONNECTED"}</span>
-          </button>
+          {/* Hardware Connection Status */}
+          {isLive ? (
+            <button
+              onClick={() => setShowSetupModal(true)}
+              className="flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>🟢 LIVE GDB AGENT CONNECTED</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowSetupModal(true)}
+              className="flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition bg-white/5 border border-white/10 text-gray-300 hover:border-[var(--a)] hover:text-white"
+            >
+              <span>🔌 Connect Hardware Agent (GDB)</span>
+            </button>
+          )}
 
           <div className="h-4 w-px bg-gray-800" />
-          <span className="text-gray-400 font-mono text-[11px] font-bold">{deviceName}</span>
+          <span className="text-cyan-400 font-mono text-[11px] font-bold">{deviceName}</span>
 
           <div className="h-4 w-px bg-gray-800" />
+          <span className="text-amber-400 font-mono text-[11px] font-bold">📜 {fileName}</span>
 
-          {/* Mode Switcher: Static Analysis Mode vs Live Debugging Mode */}
-          <div className="flex items-center gap-1 font-mono bg-black/40 p-0.5 rounded border border-white/10 text-[10px]">
-            <button
-              onClick={() => DebuggerEngine.getInstance().setMode("static")}
-              className={`px-2 py-0.5 rounded font-bold transition ${!isLive ? "bg-[var(--a)] text-black" : "text-gray-400 hover:text-white"}`}
-            >
-              Static Analysis
-            </button>
-            <button
-              onClick={() => DebuggerEngine.getInstance().setMode("live")}
-              className={`px-2 py-0.5 rounded font-bold transition ${isLive ? "bg-emerald-500 text-black" : "text-gray-400 hover:text-white"}`}
-            >
-              Live Debugging
-            </button>
-          </div>
+          {isLive && (
+            <>
+              <div className="h-4 w-px bg-gray-800" />
+              {/* Execution Controls Toolbar */}
+              <div className="flex items-center gap-1.5 font-mono">
+                {snapshot.status === "RUNNING" ? (
+                  <button
+                    onClick={() => DebuggerEngine.getInstance().halt()}
+                    title="Pause Execution (F5)"
+                    className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold hover:bg-amber-500 hover:text-black transition text-xs flex items-center gap-1"
+                  >
+                    <span>⏸</span> Pause (F5)
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => DebuggerEngine.getInstance().run()}
+                    title="Continue Execution (F5)"
+                    className="px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold hover:bg-emerald-500 hover:text-black transition text-xs flex items-center gap-1"
+                  >
+                    <span>▶</span> Run (F5)
+                  </button>
+                )}
 
-          <div className="h-4 w-px bg-gray-800" />
+                <button
+                  onClick={() => DebuggerEngine.getInstance().stepOver()}
+                  title="Step Over (F10)"
+                  className="px-2.5 py-1 rounded bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold hover:bg-cyan-500 hover:text-black transition text-xs flex items-center gap-1"
+                >
+                  <span>⤵</span> Step Over (F10)
+                </button>
 
-          {/* Execution Controls Toolbar */}
-          <div className="flex items-center gap-1.5 font-mono">
-            {snapshot.status === "RUNNING" ? (
-              <button
-                onClick={() => DebuggerEngine.getInstance().halt()}
-                title="Pause Execution (F5)"
-                className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold hover:bg-amber-500 hover:text-black transition text-xs flex items-center gap-1"
-              >
-                <span>⏸</span> Pause (F5)
-              </button>
-            ) : (
-              <button
-                onClick={() => DebuggerEngine.getInstance().run()}
-                title="Continue Execution (F5)"
-                className="px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold hover:bg-emerald-500 hover:text-black transition text-xs flex items-center gap-1"
-              >
-                <span>▶</span> Run (F5)
-              </button>
-            )}
-
-            <button
-              onClick={() => DebuggerEngine.getInstance().stepOver()}
-              title="Step Over (F10)"
-              className="px-2.5 py-1 rounded bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold hover:bg-cyan-500 hover:text-black transition text-xs flex items-center gap-1"
-            >
-              <span>⤵</span> Step Over (F10)
-            </button>
-
-            <button
-              onClick={() => DebuggerEngine.getInstance().stepInto()}
-              title="Step Into (F11)"
-              className="px-2.5 py-1 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold hover:bg-purple-500 hover:text-white transition text-xs flex items-center gap-1"
-            >
-              <span>⬇</span> Step Into (F11)
-            </button>
-
-            <button
-              onClick={() => DebuggerEngine.getInstance().reset()}
-              title="Reset Target MCU"
-              className="px-2.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-300 font-bold hover:bg-gray-700 hover:text-white transition text-xs flex items-center gap-1"
-            >
-              <span>🔄</span> Reset
-            </button>
-          </div>
+                <button
+                  onClick={() => DebuggerEngine.getInstance().stepInto()}
+                  title="Step Into (F11)"
+                  className="px-2.5 py-1 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold hover:bg-purple-500 hover:text-white transition text-xs flex items-center gap-1"
+                >
+                  <span>⬇</span> Step Into (F11)
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Live Program Counter & MCU Info */}
+        {/* Live Active Symbol Info */}
         <div className="flex items-center gap-4 font-mono text-[11px]">
           <div className="flex items-center gap-1.5">
-            <span className="text-gray-500">PC:</span>
-            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-              0x{snapshot.pc.toString(16).padStart(8, "0")}
-            </span>
+            <span className="text-gray-500">Active Symbol:</span>
+            <span className="text-[var(--a)] font-bold">{activeSym.name}()</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-gray-500">Function:</span>
-            <span className="text-cyan-300 font-bold">{snapshot.pcInfo.function}()</span>
+            <span className="text-gray-500">Address:</span>
+            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+              0x{(activeSym.value || 0).toString(16).padStart(8, "0")}
+            </span>
           </div>
           <button
             onClick={() => setSplitView(!splitView)}
@@ -312,23 +369,16 @@ export default function InvestigationWorkspace({
           </div>
         </aside>
 
-        {/* CENTER VIEWPORT (DYNAMIC MODES: SOURCE, ASSEMBLY, DECOMPILER) */}
+        {/* CENTER VIEWPORT (SOURCE & DISASSEMBLY GENERATED FROM UPLOADED ELF) */}
         <main className="flex-1 flex flex-col min-w-0 bg-[#05080c] overflow-hidden border-r border-[var(--line)]">
           {/* Sub-Header View Tabs */}
           <div className="px-4 bg-[#070b10] border-b border-[var(--line)] flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-1 font-mono text-xs">
-              {(isLive
-                ? [
-                    { id: "source", label: "📜 Source Code View" },
-                    { id: "assembly", label: "⚙ Assembly" },
-                  ]
-                : [
-                    { id: "source", label: "📜 Source Code View" },
-                    { id: "assembly", label: "⚙ Disassembly" },
-                    { id: "decompiler", label: "🧬 Decompiler AST" },
-                    { id: "analysis", label: "📊 Function Analysis" },
-                  ]
-              ).map(tab => (
+              {[
+                { id: "source", label: "📜 Source Code View" },
+                { id: "assembly", label: "⚙ Assembly Disassembly" },
+                { id: "decompiler", label: "🧬 Decompiler AST" },
+              ].map(tab => (
                 <button
                   key={tab.id}
                   onClick={() => setCenterTab(tab.id as CenterTab)}
@@ -341,7 +391,7 @@ export default function InvestigationWorkspace({
               ))}
             </div>
             <span className="text-xs font-mono text-amber-400 font-bold">
-              {snapshot.pcInfo.file}:{snapshot.pcInfo.line}
+              {dynSource.filename}:{dynSource.decl_line}
             </span>
           </div>
 
@@ -350,57 +400,71 @@ export default function InvestigationWorkspace({
             {/* SOURCE CODE VIEW */}
             {(centerTab === "source" || splitView) && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#03060a] overflow-y-auto p-3 font-mono text-xs">
-                {snapshot.sourceLines.map((line) => {
-                  const isCurrentPcLine = line.num === snapshot.pcInfo.line;
-                  const hasBp = breakpoints.has(line.num);
+                {loadingSource ? (
+                  <div className="flex-1 flex items-center justify-center p-8 text-[var(--a)] font-mono text-xs">
+                    Extracting DWARF / AST source for '{activeSym.name}'...
+                  </div>
+                ) : activeSourceLines.length > 0 ? (
+                  activeSourceLines.map(line => {
+                    const isCurrentPcLine = line.num === snapshot.pcInfo.line && isLive;
+                    const hasBp = breakpoints.has(line.num);
 
-                  return (
-                    <div
-                      key={line.num}
-                      ref={isCurrentPcLine ? activePcLineRef : null}
-                      className={`flex items-center gap-3 px-2 py-1 rounded font-mono transition ${
-                        isCurrentPcLine ? "bg-amber-500/25 border-l-4 border-amber-400 font-bold text-amber-200" : "hover:bg-white/5 text-gray-300"
-                      }`}
-                    >
-                      {/* Breakpoint Gutter */}
-                      <button
-                        onClick={() => toggleBreakpoint(line.num)}
-                        title="Toggle Breakpoint"
-                        className="w-4 h-4 rounded-full grid place-items-center flex-shrink-0"
+                    return (
+                      <div
+                        key={line.num}
+                        ref={isCurrentPcLine ? activePcLineRef : null}
+                        className={`flex items-center gap-3 px-2 py-0.5 rounded font-mono transition ${
+                          isCurrentPcLine ? "bg-amber-500/25 border-l-4 border-amber-400 font-bold text-amber-200" : "hover:bg-white/5 text-gray-300"
+                        }`}
                       >
-                        {hasBp ? <span className="w-3 h-3 bg-red-500 rounded-full animate-ping" /> : <span className="w-1.5 h-1.5 bg-gray-700 hover:bg-gray-400 rounded-full" />}
-                      </button>
+                        {/* Breakpoint Gutter */}
+                        <button
+                          onClick={() => toggleBreakpoint(line.num)}
+                          title="Toggle Breakpoint"
+                          className="w-4 h-4 rounded-full grid place-items-center flex-shrink-0"
+                        >
+                          {hasBp ? <span className="w-3 h-3 bg-red-500 rounded-full animate-ping" /> : <span className="w-1.5 h-1.5 bg-gray-700 hover:bg-gray-400 rounded-full" />}
+                        </button>
 
-                      {/* Line Number */}
-                      <span className="w-8 text-right text-gray-600 select-none flex-shrink-0">
-                        {line.num}
-                      </span>
+                        {/* Line Number */}
+                        <span className="w-8 text-right text-gray-600 select-none flex-shrink-0">
+                          {line.num}
+                        </span>
 
-                      {/* PC Indicator */}
-                      <span className="w-4 flex-shrink-0 text-amber-400 font-bold">
-                        {isCurrentPcLine ? "▶" : ""}
-                      </span>
+                        {/* PC Indicator */}
+                        <span className="w-4 flex-shrink-0 text-amber-400 font-bold">
+                          {isCurrentPcLine ? "▶" : ""}
+                        </span>
 
-                      {/* Code Content */}
-                      <span className="flex-1 text-[13px]">
-                        {line.text}
-                      </span>
-                    </div>
-                  );
-                })}
+                        {/* Code Content */}
+                        <span className="flex-1 text-[13px]">
+                          {line.text}
+                        </span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center text-gray-500 italic font-mono text-xs">
+                    No source lines available for function {activeSym.name}(). Compile binary with -g for full DWARF source mapping.
+                  </div>
+                )}
               </div>
             )}
 
             {/* DISASSEMBLY VIEW */}
             {(centerTab === "assembly" || splitView) && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-y-auto p-3 font-mono text-xs border-l border-[var(--line)]">
-                {snapshot.disassembly.length > 0 ? (
-                  snapshot.disassembly.map((ins, idx) => {
-                    const isPcMatch = ins.addr === snapshot.pc;
+                {loadingDisasm ? (
+                  <div className="flex-1 flex items-center justify-center p-8 text-cyan-400 font-mono text-xs">
+                    Decoding machine code instructions via Capstone...
+                  </div>
+                ) : activeDisasm.length > 0 ? (
+                  activeDisasm.map((ins, idx) => {
+                    const isPcMatch = ins.addr === snapshot.pc && isLive;
                     return (
                       <div
                         key={idx}
-                        className={`flex items-center gap-4 px-2 py-1 rounded font-mono transition ${
+                        className={`flex items-center gap-4 px-2 py-0.5 rounded font-mono transition ${
                           isPcMatch ? "bg-cyan-500/25 border-l-4 border-cyan-400 text-cyan-200 font-bold" : "hover:bg-white/5 text-gray-300"
                         }`}
                       >
@@ -413,16 +477,17 @@ export default function InvestigationWorkspace({
                     );
                   })
                 ) : (
-                  <div className="p-4 text-gray-500 italic">Disassembling memory window around PC 0x{snapshot.pc.toString(16).padStart(8, "0")}...</div>
+                  <div className="p-8 text-center text-gray-500 italic font-mono text-xs">
+                    No disassembly instructions available for symbol {activeSym.name}.
+                  </div>
                 )}
               </div>
             )}
           </div>
         </main>
 
-        {/* ⚡ RIGHT INSPECTOR PANE (LIVE REGISTERS DIFF, STACK & VARIABLES) */}
+        {/* ⚡ RIGHT INSPECTOR PANE */}
         <aside className="w-80 border-l border-[var(--line)] bg-[#070b10] flex flex-col flex-shrink-0 font-mono text-xs">
-          {/* Inspector Tab Bar */}
           <div className="p-2 border-b border-[var(--line)] bg-black/40 flex items-center justify-between gap-1">
             {[
               { id: "registers", label: "⚡ Regs" },
@@ -442,25 +507,24 @@ export default function InvestigationWorkspace({
             ))}
           </div>
 
-          {/* TAB CONTENT */}
+          {/* INSPECTOR DETAILS */}
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {/* LIVE REGISTERS WITH CHANGED HIGHLIGHT */}
             {rightTab === "registers" && (
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1 flex justify-between">
                   <span>ARM Core Registers</span>
-                  <span className="text-emerald-400">Live Snapshot</span>
+                  <span className={isLive ? "text-emerald-400" : "text-gray-500"}>
+                    {isLive ? "Live Target Stream" : "Static State"}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {Object.entries(snapshot.registers).map(([reg, val]) => {
-                    const isChanged = snapshot.changedRegs.has(reg);
-                    const prevVal = snapshot.prevRegisters[reg];
+                    const isChanged = snapshot.changedRegs.has(reg) && isLive;
                     const hexVal = `0x${val.toString(16).padStart(8, "0")}`;
 
                     return (
                       <div
                         key={reg}
-                        title={prevVal !== undefined ? `Previous: 0x${prevVal.toString(16).padStart(8, "0")}` : undefined}
                         className={`p-2 rounded border transition flex flex-col ${
                           isChanged
                             ? "bg-amber-500/20 border-amber-400 text-amber-200 font-bold shadow-[0_0_8px_rgba(251,191,36,0.3)] animate-pulse"
@@ -476,27 +540,28 @@ export default function InvestigationWorkspace({
               </div>
             )}
 
-            {/* STACK MEMORY VIEWER */}
             {rightTab === "stack" && (
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1">
-                  Stack Pointer Memory (SP: 0x{snapshot.sp.toString(16).padStart(8, "0")})
+                  Symbol Memory Specs ({activeSym.name})
                 </div>
-                <div className="space-y-1">
-                  {snapshot.stackMemory.map(row => (
-                    <div key={row.addr} className="p-2 rounded bg-black/40 border border-white/10 font-mono text-[11px] flex justify-between items-center">
-                      <div>
-                        <div className="text-amber-400 font-bold">{row.addr}</div>
-                        <div className="text-cyan-300">{row.hex}</div>
-                      </div>
-                      {row.label && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">{row.label}</span>}
-                    </div>
-                  ))}
+                <div className="space-y-1 text-[11px]">
+                  <div className="p-2 rounded bg-black/40 border border-white/10 flex justify-between">
+                    <span className="text-gray-400">Section:</span>
+                    <span className="text-amber-400 font-bold">{activeSym.secName}</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-white/10 flex justify-between">
+                    <span className="text-gray-400">Size:</span>
+                    <span className="text-cyan-300 font-bold">{activeSym.size} Bytes</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-white/10 flex justify-between">
+                    <span className="text-gray-400">Start Address:</span>
+                    <span className="text-emerald-400 font-bold">0x{(activeSym.value || 0).toString(16).padStart(8, "0")}</span>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* DWARF VARIABLES */}
             {rightTab === "variables" && (
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1">
@@ -510,23 +575,21 @@ export default function InvestigationWorkspace({
                         <span className="text-gray-500">{v.type}</span>
                       </div>
                       <div className="text-emerald-400 font-bold mt-0.5">{v.value}</div>
-                      <div className="text-[9px] text-gray-500 mt-0.5">{v.address}</div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* PERIPHERALS VIEW */}
             {rightTab === "peripherals" && (
               <div className="space-y-2">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1">
-                  MCU Peripheral Registers
+                  MCU Peripheral Database
                 </div>
                 {["GPIOA", "RCC", "USART1", "TIM2"].map(peri => (
                   <div key={peri} className="p-2 rounded bg-black/40 border border-white/10 font-mono text-xs">
                     <div className="font-bold text-cyan-300">{peri}</div>
-                    <div className="text-[10px] text-gray-400 mt-1">Status: Active | Base: 0x40010800</div>
+                    <div className="text-[10px] text-gray-400 mt-1">Base: 0x40010800</div>
                   </div>
                 ))}
               </div>
@@ -535,65 +598,60 @@ export default function InvestigationWorkspace({
         </aside>
       </div>
 
-      {/* 📟 BOTTOM GDB TERMINAL & RSP CONSOLE PANE */}
-      <div className="h-44 border-t border-[var(--line)] bg-[#03060a] flex flex-col flex-shrink-0 font-mono text-xs">
-        <div className="px-4 py-1 bg-[#070b10] border-b border-[var(--line)] flex justify-between items-center text-[11px] font-bold">
-          <span className="text-[var(--a)]">💻 Live GDB Terminal & RSP Packet Stream</span>
-          <span className="text-gray-500">Connected: ws://127.0.0.1:9001</span>
+      {/* 📟 BOTTOM TERMINAL LOGS PANE (WHEN LIVE AGENT IS CONNECTED) */}
+      {isLive && (
+        <div className="h-36 border-t border-[var(--line)] bg-[#03060a] flex flex-col flex-shrink-0 font-mono text-xs">
+          <div className="px-4 py-1 bg-[#070b10] border-b border-[var(--line)] flex justify-between items-center text-[11px] font-bold">
+            <span className="text-[var(--a)]">💻 Live GDB Terminal & RSP Stream</span>
+            <span className="text-gray-500">ws://127.0.0.1:9001</span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-[11px]">
+            {snapshot.gdbLogs.map(log => (
+              <div key={log.id} className="flex items-start gap-2">
+                <span className="text-gray-600">{log.time}</span>
+                <span className={`font-bold ${log.type === "cmd" ? "text-cyan-400" : log.type === "rsp" ? "text-emerald-400" : "text-gray-300"}`}>
+                  {log.type === "cmd" ? "➔ " : "⬅ "} {log.text}
+                </span>
+              </div>
+            ))}
+            <div ref={consoleBottomRef} />
+          </div>
+
+          <form onSubmit={handleCustomGdbSubmit} className="p-1.5 border-t border-white/10 bg-black/40 flex items-center gap-2">
+            <span className="text-cyan-400 font-bold pl-2">(gdb)</span>
+            <input
+              type="text"
+              value={gdbInput}
+              onChange={e => setGdbInput(e.target.value)}
+              placeholder="Type GDB command..."
+              className="flex-1 bg-black/60 border border-white/10 rounded px-2 py-0.5 text-xs text-white font-mono"
+            />
+            <button type="submit" className="px-2.5 py-0.5 rounded bg-[var(--a)] text-black font-bold text-xs font-mono">
+              Send
+            </button>
+          </form>
         </div>
+      )}
 
-        {/* LOG STREAM */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-[11px] select-text">
-          {snapshot.gdbLogs.map(log => (
-            <div key={log.id} className="flex items-start gap-2">
-              <span className="text-gray-600 select-none">{log.time}</span>
-              <span className={`font-bold ${
-                log.type === "cmd" ? "text-cyan-400" : log.type === "rsp" ? "text-emerald-400" : log.type === "error" ? "text-red-400 font-bold" : "text-gray-300"
-              }`}>
-                {log.type === "cmd" ? "➔ " : log.type === "rsp" ? "⬅ " : "ℹ "} {log.text}
-              </span>
-            </div>
-          ))}
-          <div ref={consoleBottomRef} />
-        </div>
-
-        {/* GDB COMMAND INPUT PROMPT */}
-        <form onSubmit={handleCustomGdbSubmit} className="p-2 border-t border-white/10 bg-black/40 flex items-center gap-2">
-          <span className="text-cyan-400 font-bold pl-2">(gdb)</span>
-          <input
-            type="text"
-            value={gdbInput}
-            onChange={e => setGdbInput(e.target.value)}
-            placeholder="Type GDB command (e.g. stepi, continue, info registers)..."
-            className="flex-1 bg-black/60 border border-white/10 rounded px-2.5 py-1 text-xs text-white focus:border-[var(--a)] focus:outline-none font-mono"
-          />
-          <button
-            type="submit"
-            className="px-3 py-1 rounded bg-[var(--a)] text-black font-bold text-xs hover:opacity-90 transition font-mono"
-          >
-            Send
-          </button>
-        </form>
-      </div>
-
-      {/* 🟢 VS CODE STYLE FIXED BOTTOM EMBEDDED STATUS BAR */}
+      {/* 🟢 VS CODE STYLE FIXED BOTTOM STATUS BAR */}
       <footer className="h-6 bg-[#090d14] border-t border-white/10 px-4 flex items-center justify-between text-[11px] font-mono text-gray-400 flex-shrink-0">
         <div className="flex items-center gap-4">
           <span className="text-cyan-400 font-bold">⚡ {deviceName}</span>
           <span>•</span>
-          <span className="text-emerald-400">Probe: ST-Link V2</span>
+          <span className="text-amber-300 font-bold">Binary: {fileName}</span>
           <span>•</span>
-          <span className="text-purple-300">OpenOCD:3333</span>
-          <span>•</span>
-          <span className="text-amber-300 font-bold">GDB: {snapshot.status}</span>
+          <span className="text-emerald-400">Symbols: {symbols.length}</span>
         </div>
 
         <div className="flex items-center gap-4">
-          <span className="text-white font-bold">PC: 0x{snapshot.pc.toString(16).padStart(8, "0")}</span>
+          <span className="text-white font-bold">Active: {activeSym.name}()</span>
           <span>•</span>
-          <span className="text-cyan-300">DWARF: 219 Symbols Loaded</span>
+          <span className="text-cyan-300">Address: 0x{(activeSym.value || 0).toString(16).padStart(8, "0")}</span>
           <span>•</span>
-          <span className="text-emerald-400">Mode: {snapshot.mode.toUpperCase()}</span>
+          <span className={isLive ? "text-emerald-400 font-bold" : "text-gray-500"}>
+            {isLive ? "LIVE GDB CONNECTED" : "STATIC ANALYSIS"}
+          </span>
         </div>
       </footer>
 

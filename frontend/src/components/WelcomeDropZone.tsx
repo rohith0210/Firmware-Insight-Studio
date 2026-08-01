@@ -20,10 +20,17 @@ export default function WelcomeDropZone({ onFileParsed }: Props) {
 
     try {
       const apiBase = getApiBaseUrl();
-      const res = await fetch(`${apiBase}/api/parse`, {
+      let res = await fetch(`${apiBase}/api/upload`, {
         method: "POST",
         body: formData,
       });
+
+      if (!res.ok) {
+        res = await fetch(`${apiBase}/api/parse`, {
+          method: "POST",
+          body: formData,
+        });
+      }
 
       if (!res.ok) {
         throw new Error(`Upload failed with status ${res.status}`);

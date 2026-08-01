@@ -67,11 +67,9 @@ def _get_cache(checksum: str = ""):
                     return _CACHE[checksum]
             except Exception:
                 pass
-            if _CACHE:
-                return list(_CACHE.values())[-1]
-    except Exception:
-        pass
-    return _create_synthetic_cache()
+    if _CACHE:
+        return next(reversed(_CACHE.values()))
+    return None
 
 class ParseResult(BaseModel):
     filename: str
@@ -902,6 +900,7 @@ def parse_elf(path: str) -> dict:
     }
 
 @app.post("/api/upload", response_model=ParseResult)
+@app.post("/api/parse", response_model=ParseResult)
 async def upload_firmware(file: UploadFile = File(...)):
     allowed = (".elf", ".o", ".out", ".axf", ".bin", ".zip")
     if not file.filename.lower().endswith(allowed):

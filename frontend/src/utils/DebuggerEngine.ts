@@ -66,16 +66,7 @@ export class DebuggerEngine {
       line: 18,
       found: true
     },
-    sourceLines: [
-      { num: 1, text: "#include <stdint.h>" },
-      { num: 2, text: "void large_function_A(void) { volatile int d[1000]; for(int i=0;i<1000;i++) d[i]=i; }" },
-      { num: 3, text: "void large_function_B(void) { volatile int d[2000]; for(int i=0;i<2000;i++) d[i]=i; }" },
-      { num: 4, text: "int main(void) {" },
-      { num: 5, text: "    large_function_A();" },
-      { num: 6, text: "    large_function_B();" },
-      { num: 7, text: "    return 0;" },
-      { num: 8, text: "}" }
-    ],
+    sourceLines: [],
     disassembly: [],
     stackMemory: [],
     variables: [
