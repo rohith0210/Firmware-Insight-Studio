@@ -447,6 +447,28 @@ export default function Disassembler({
 
   const filteredFuncs = funcs.filter(f => f.toLowerCase().includes(funcSearch.toLowerCase()));
 
+  // Check if current instruction is a subroutine call / branch targeting a function
+  const canStepInto = useMemo(() => {
+    if (!dis || !dis.instructions || dis.instructions.length === 0) return false;
+    const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
+    const currInstr = dis.instructions.find(i => (i.addr & ~1) === currentPc);
+    if (!currInstr) return false;
+
+    const mn = currInstr.mn.toLowerCase();
+    const CALL_MNEMONICS = [
+      "bl", "blx", "b", "bx", "cbz", "cbnz",
+      "jal", "jalr", "call", "call0", "call4", "call8", "call12", "callq", "callx0", "blr"
+    ];
+    if (CALL_MNEMONICS.includes(mn)) {
+      const targetStr = currInstr.op.split(" ")[0].replace(/[<>]/g, "");
+      return result.symbols?.some(s => s.name === targetStr || s.name === currInstr.op) ?? true;
+    }
+    return false;
+  }, [dis, pc, result.symbols]);
+
+  // Step Out is only available when there is an active caller frame to return to (callStack depth > 1)
+  const canStepOut = callStack.length > 1;
+
   return (
     <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
       {/* CLEAN EXECUTION WORKSPACE CONTAINER */}
@@ -529,12 +551,12 @@ export default function Disassembler({
 
           <button
             onClick={handleStepInto}
-            disabled={status === "running"}
-            title="Step Into (follow function calls like HAL_Init or subroutine calls)"
+            disabled={status === "running" || !canStepInto}
+            title={canStepInto ? "Step Into (follow function calls like HAL_Init or subroutine calls)" : "Step Into unavailable (current instruction is not a subroutine call)"}
             className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-              status === "running"
-                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                : "bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
+              status === "running" || !canStepInto
+                ? "bg-black/40 border border-white/10 text-gray-600 cursor-not-allowed opacity-40 shadow-none"
+                : "bg-[rgba(51,214,194,0.22)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-[0_0_10px_rgba(51,214,194,0.25)]"
             }`}
           >
             <span>⤶ Step Into</span>
@@ -542,12 +564,12 @@ export default function Disassembler({
 
           <button
             onClick={handleStepOut}
-            disabled={status === "running"}
-            title="Step Out (return to caller function at LR)"
+            disabled={status === "running" || !canStepOut}
+            title={canStepOut ? "Step Out (return to caller function at LR)" : "Step Out unavailable (no outer caller frame in Call Stack)"}
             className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-              status === "running"
-                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                : "bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20 text-purple-300 shadow-sm"
+              status === "running" || !canStepOut
+                ? "bg-black/40 border border-white/10 text-gray-600 cursor-not-allowed opacity-40 shadow-none"
+                : "bg-purple-500/20 border-purple-400 text-purple-300 hover:bg-purple-500 hover:text-white shadow-[0_0_10px_rgba(168,85,247,0.25)]"
             }`}
           >
             <span>⤴ Step Out</span>
