@@ -259,7 +259,7 @@ Waiting for Browser...
 ### Step 4: Open Firmware Insight Studio & Connect
 
 Open the web app at:
-`https://firmware-insight-studio.vercel.app`
+`http://localhost:5173`
 
 Click:
 `Execution Workspace` ➔ `Connect Local Agent`

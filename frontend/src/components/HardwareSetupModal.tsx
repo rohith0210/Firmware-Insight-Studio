@@ -378,8 +378,8 @@ export default function HardwareSetupModal({
                 </span>
                 <span className="text-sm font-bold text-white">Step 4: Open Firmware Insight Studio & Connect</span>
               </div>
-              <span className="text-cyan-400 font-mono text-xs underline">
-                https://firmware-insight-studio.vercel.app
+              <span className="text-cyan-400 font-mono text-xs font-bold">
+                http://localhost:5173
               </span>
             </div>
 
