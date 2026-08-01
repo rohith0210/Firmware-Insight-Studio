@@ -724,6 +724,8 @@ def parse_elf(path: str) -> dict:
             if isinstance(sec, SymbolTableSection):
                 for sym in sec.iter_symbols():
                     if not sym.name: continue
+                    if sym.name.startswith("$t") or sym.name.startswith("$a") or sym.name.startswith("$d"):
+                        continue
                     shndx = sym['st_shndx']
                     actual = "ABS" if shndx == 'SHN_ABS' else "COMMON" if shndx == 'SHN_COMMON' else "UNDEF" if shndx == 'SHN_UNDEF' else section_map.get(shndx, "UNKNOWN")
                     
