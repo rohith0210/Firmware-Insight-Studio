@@ -5,7 +5,7 @@
 <h1 align="center">Firmware Insight Studio v2.0</h1>
 
 <p align="center">
-  <strong>A Desktop-Class Embedded Firmware Replay &amp; Introspection IDE</strong><br/>
+  <strong>Offline Virtual Embedded Debugger, Firmware Replay Engine &amp; Introspection IDE</strong><br/>
   <em>Build a professional desktop-class embedded engineering application that happens to run in a browser.</em>
 </p>
 
@@ -16,14 +16,14 @@
 
 <br><br>
 
-<!-- platform & tech stack badges -->
-<img src="https://img.shields.io/badge/Linux-0b1220?style=flat-square&logo=linux&logoColor=white" alt="Linux">
-<img src="https://img.shields.io/badge/macOS-0b1220?style=flat-square&logo=apple&logoColor=white" alt="macOS">
-<img src="https://img.shields.io/badge/Windows-0b1220?style=flat-square&logo=windows&logoColor=white" alt="Windows">
-<img src="https://img.shields.io/badge/TypeScript-0b1220?style=flat-square&logo=typescript&logoColor=3178C6" alt="TypeScript">
-<img src="https://img.shields.io/badge/React_18-0b1220?style=flat-square&logo=react&logoColor=61DAFB" alt="React 18">
-<img src="https://img.shields.io/badge/FastAPI-0b1220?style=flat-square&logo=fastapi&logoColor=009688" alt="FastAPI">
-<img src="https://img.shields.io/badge/Capstone_5.0-0b1220?style=flat-square&color=2dd4bf" alt="Capstone 5.0">
+<!-- embedded target & technology stack badges -->
+<img src="https://img.shields.io/badge/ARM_Cortex--M-Thumb--2-0b1220?style=flat-square&color=0091BD" alt="ARM Cortex-M">
+<img src="https://img.shields.io/badge/RISC--V-RV32I%2FRV64I-0b1220?style=flat-square&color=E64A19" alt="RISC-V">
+<img src="https://img.shields.io/badge/Xtensa-ESP32-0b1220?style=flat-square&color=E7352F" alt="Xtensa">
+<img src="https://img.shields.io/badge/FastAPI-0.115-0b1220?style=flat-square&logo=fastapi&logoColor=009688" alt="FastAPI">
+<img src="https://img.shields.io/badge/React_18-TypeScript_5-0b1220?style=flat-square&logo=react&logoColor=61DAFB" alt="React & TS">
+<img src="https://img.shields.io/badge/Capstone-5.0-0b1220?style=flat-square&color=2dd4bf" alt="Capstone 5.0">
+<img src="https://img.shields.io/badge/pyelftools-0.31-0b1220?style=flat-square&color=3178C6" alt="pyelftools">
 
 <br><br>
 
@@ -42,9 +42,9 @@
 <div align="center">
 <table>
 <tr>
-<td align="center" width="33%">🟩&nbsp;&nbsp;<b>Introspect It</b><br><sub>Flash & RAM treemaps, DWARF lines & section boundaries</sub></td>
-<td align="center" width="33%">🟨&nbsp;&nbsp;<b>Replay It</b><br><sub>Virtual PC instruction stepping, Call Lineage & Call Stack</sub></td>
-<td align="center" width="33%">🟥&nbsp;&nbsp;<b>Optimize It</b><br><sub>Reclaimable Flash calculator, dead-code & security audit</sub></td>
+<td align="center" width="33%">⚡&nbsp;&nbsp;<b>Virtual Replay Engine</b><br><sub>Instruction stepping, Call Lineage & Call Stack frames</sub></td>
+<td align="center" width="33%">🗺️&nbsp;&nbsp;<b>Memory & Symbol Introspection</b><br><sub>Flash/SRAM treemaps, DWARF line tables & sections</sub></td>
+<td align="center" width="33%">🔍&nbsp;&nbsp;<b>Footprint Optimization</b><br><sub>Dead code recovery, reclaimable bytes & security scan</sub></td>
 </tr>
 </table>
 </div>
