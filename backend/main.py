@@ -904,48 +904,18 @@ def parse_elf(path: str) -> dict:
 @app.post("/api/upload", response_model=ParseResult)
 @app.post("/api/parse", response_model=ParseResult)
 async def upload_firmware(file: UploadFile = File(...)):
-    allowed = (".elf", ".o", ".out", ".axf", ".bin", ".zip")
+    allowed = (".elf", ".o", ".out", ".axf")
     if not file.filename.lower().endswith(allowed):
         raise HTTPException(400, f"Only {allowed} supported")
     content = await file.read()
+    if not content.startswith(b"\x7fELF"):
+        raise HTTPException(400, "The selected file is not an ELF-compatible firmware or object file.")
 
     elf_bytes = None
     source_files: Dict[str, str] = {}
     filename = file.filename
 
-    if file.filename.lower().endswith(".zip"):
-        import zipfile, io
-        try:
-            with zipfile.ZipFile(io.BytesIO(content)) as z:
-                elf_entry = None
-                for member in z.namelist():
-                    lower_name = member.lower()
-                    if lower_name.endswith((".elf", ".axf", ".bin", ".o", ".out")):
-                        elf_entry = member
-                        break
-                    elif (not elf_entry) and not member.endswith("/") and not lower_name.endswith((".c", ".h", ".cpp", ".hpp", ".txt", ".md", ".json")):
-                        elf_entry = member
-
-                if not elf_entry:
-                    raise HTTPException(400, "ZIP archive must contain an ELF binary (.elf, .axf, .bin, .o, .out)")
-
-                elf_bytes = z.read(elf_entry)
-                filename = os.path.basename(elf_entry)
-
-                for member in z.namelist():
-                    if member.endswith("/"): continue
-                    lower_name = member.lower()
-                    if lower_name.endswith((".c", ".h", ".cpp", ".hpp", ".s", ".asm")):
-                        try:
-                            text = z.read(member).decode("utf-8", "ignore")
-                            source_files[member] = text
-                            source_files[os.path.basename(member)] = text
-                        except Exception:
-                            pass
-        except zipfile.BadZipFile:
-            raise HTTPException(400, "Invalid ZIP archive file.")
-    else:
-        elf_bytes = content
+    elf_bytes = content
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".elf") as tmp:
         tmp.write(elf_bytes)
@@ -1904,5 +1874,3 @@ def get_debug_state(checksum: str = Query(default=""), pc: str = Query(default="
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "Firmware Insight Studio Binary Intelligence Engine"}
-
-

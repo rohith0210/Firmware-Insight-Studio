@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ParseResult } from "../App";
 import type { Device } from "../utils/devices";
-import { colRegions } from "../utils/devices";
+import { colRegions, inRegion } from "../utils/devices";
 import MemoryInspector from "./MemoryInspector";
 import MemoryTreemap from "./MemoryTreemap";
 
@@ -78,8 +78,6 @@ export default function MemoryMap({
   const flashFree = Math.max(0, flashTotal - flashUsed);
   const ramUsed = (result.summary[".data"] || 0) + (result.summary[".bss"] || 0) + (result.summary["heap"] || 0);
   const ramFree = Math.max(0, ramTotal - ramUsed);
-  const heapUsed = result.summary["heap"] ?? 2048;
-  const stackReserved = 4096;
 
   const largestObject = useMemo(() => {
     if (result.objects && result.objects.length > 0) {
@@ -97,119 +95,42 @@ export default function MemoryMap({
     return { name: "main", size: 512 };
   }, [result]);
 
-  // Section Rows with Parent Groups
+  // Use the parsed ELF addresses, then classify them against the currently selected device map.
+  // This keeps manual device changes visible in the memory analysis rather than pinning it to Cortex-M defaults.
   const sectionRows: SectionDetail[] = useMemo(() => {
-    const list: SectionDetail[] = [
-      {
-        id: "Vector Table",
-        name: "Vector Table",
-        purpose: regionPurpose("Vector Table"),
-        size: result.summary[".isr_vector"] || 336,
-        pct: percent(result.summary[".isr_vector"] || 336, flashTotal),
-        start: "0x08000000",
-        end: "0x0800014f",
-        memoryType: "Flash",
-        permissions: "R",
-        objectCount: 1,
-        symbolCount: 48,
-        color: regionColor("Vector Table"),
-        parent: "FLASH",
-      },
-      {
-        id: ".text",
-        name: ".text",
-        purpose: regionPurpose(".text"),
-        size: result.summary[".text"] || 4096,
-        pct: percent(result.summary[".text"] || 4096, flashTotal),
-        start: "0x08000150",
-        end: `0x${(0x08000150 + (result.summary[".text"] || 4096)).toString(16)}`,
-        memoryType: "Flash",
-        permissions: "RX",
-        objectCount: result.objects?.length || 4,
-        symbolCount: result.symbols?.filter(s => s.section === ".text").length || 32,
-        color: regionColor(".text"),
-        parent: "FLASH",
-      },
-      {
-        id: ".rodata",
-        name: ".rodata",
-        purpose: regionPurpose(".rodata"),
-        size: result.summary[".rodata"] || 1024,
-        pct: percent(result.summary[".rodata"] || 1024, flashTotal),
-        start: "0x08001150",
-        end: `0x${(0x08001150 + (result.summary[".rodata"] || 1024)).toString(16)}`,
-        memoryType: "Flash",
-        permissions: "R",
-        objectCount: 2,
-        symbolCount: result.symbols?.filter(s => s.section === ".rodata").length || 12,
-        color: regionColor(".rodata"),
-        parent: "FLASH",
-      },
-      {
-        id: ".data",
-        name: ".data",
-        purpose: regionPurpose(".data"),
-        size: result.summary[".data"] || 256,
-        pct: percent(result.summary[".data"] || 256, ramTotal),
-        start: "0x20000000",
-        end: `0x${(0x20000000 + (result.summary[".data"] || 256)).toString(16)}`,
-        memoryType: "SRAM",
-        permissions: "RW",
-        objectCount: 3,
-        symbolCount: result.symbols?.filter(s => s.section === ".data").length || 8,
-        color: regionColor(".data"),
-        parent: "SRAM",
-      },
-      {
-        id: ".bss",
-        name: ".bss",
-        purpose: regionPurpose(".bss"),
-        size: result.summary[".bss"] || 2048,
-        pct: percent(result.summary[".bss"] || 2048, ramTotal),
-        start: "0x20000100",
-        end: `0x${(0x20000100 + (result.summary[".bss"] || 2048)).toString(16)}`,
-        memoryType: "SRAM",
-        permissions: "RW",
-        objectCount: 4,
-        symbolCount: result.symbols?.filter(s => s.section === ".bss").length || 14,
-        color: regionColor(".bss"),
-        parent: "SRAM",
-      },
-      {
-        id: "Heap",
-        name: "Heap",
-        purpose: regionPurpose("Heap"),
-        size: heapUsed,
-        pct: percent(heapUsed, ramTotal),
-        start: "0x20000900",
-        end: "0x20001100",
-        memoryType: "SRAM",
-        permissions: "RW",
-        objectCount: 0,
-        symbolCount: 0,
-        color: regionColor("Heap"),
-        parent: "SRAM",
-      },
-      {
-        id: "Stack",
-        name: "Stack",
-        purpose: regionPurpose("Stack"),
-        size: stackReserved,
-        pct: percent(stackReserved, ramTotal),
-        start: "0x20004000",
-        end: "0x20005000",
-        memoryType: "SRAM",
-        permissions: "RW",
-        objectCount: 0,
-        symbolCount: 0,
-        color: regionColor("Stack"),
-        parent: "SRAM",
-      },
-    ];
-    return list;
-  }, [result, flashTotal, ramTotal, heapUsed, stackReserved]);
+    return result.sections
+      .filter(section => section.size > 0 && section.name)
+      .map(section => {
+        const name = section.name;
+        const writableByName = /\.(data|bss|tbss|tdata)|heap|stack/i.test(name);
+        const mappedRegion = device.regions.find(region => inRegion(region, section.addr));
+        const mappedAsRam = mappedRegion?.kind === "ram" || mappedRegion?.kind === "ccm";
+        const parent = mappedAsRam || (!mappedRegion && writableByName) ? "SRAM" : "FLASH";
+        const flags = section.flags || 0;
+        const permissions: SectionDetail["permissions"] = flags & 0x1 ? "RW" : flags & 0x4 ? "RX" : "R";
+        return {
+          id: name,
+          name,
+          purpose: regionPurpose(name),
+          size: section.size,
+          pct: percent(section.size, parent === "FLASH" ? flashTotal : ramTotal),
+          start: `0x${section.addr.toString(16)}`,
+          end: `0x${(section.addr + section.size - 1).toString(16)}`,
+          memoryType: parent === "FLASH" ? "Flash" : "SRAM",
+          permissions,
+          objectCount: result.objects?.filter(object => object.section === name).length || 0,
+          symbolCount: result.symbols?.filter(symbol => symbol.section === name).length || 0,
+          color: regionColor(name),
+          parent,
+        };
+      });
+  }, [result.sections, result.symbols, result.objects, device, flashTotal, ramTotal]);
+
+  const flashBase = flashRegions[0]?.base ?? device.regions.find(region => region.kind === "virt")?.base ?? 0;
+  const ramBase = ramRegions[0]?.base ?? device.regions.find(region => /data|ram/i.test(region.name))?.base ?? 0;
 
   const largestSection = useMemo(() => sectionRows.slice().sort((a, b) => b.size - a.size)[0], [sectionRows]);
+  const mappedBytes = sectionRows.reduce((sum, section) => sum + section.size, 0) || 1;
 
   const handleRegionSelection = (region: SectionDetail) => {
     setActiveRegion(region);
@@ -239,7 +160,7 @@ export default function MemoryMap({
                 onClick={() => toggleParent("FLASH")}
                 className="w-full text-left font-bold text-emerald-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
               >
-                <span>{expandedParents.FLASH ? "▼" : "▶"} Flash (0x08000000)</span>
+                <span>{expandedParents.FLASH ? "▼" : "▶"} Code / Flash (0x{flashBase.toString(16)})</span>
                 <span className="text-[10px] text-[var(--mut)]">{fmtSize(flashUsed)} / {fmtSize(flashTotal)}</span>
               </button>
 
@@ -274,7 +195,7 @@ export default function MemoryMap({
                 onClick={() => toggleParent("SRAM")}
                 className="w-full text-left font-bold text-amber-400 hover:bg-white/5 px-2 py-1 rounded flex justify-between items-center transition"
               >
-                <span>{expandedParents.SRAM ? "▼" : "▶"} SRAM (0x20000000)</span>
+                <span>{expandedParents.SRAM ? "▼" : "▶"} Writable Memory (0x{ramBase.toString(16)})</span>
                 <span className="text-[10px] text-[var(--mut)]">{fmtSize(ramUsed)} / {fmtSize(ramTotal)}</span>
               </button>
 
@@ -324,14 +245,25 @@ export default function MemoryMap({
             </div>
 
             {/* SINGLE UNIFIED CONTINUOUS NORMALIZED BAR CONTAINER */}
-            <div className="h-12 w-full rounded-md bg-black/80 border border-[var(--line)] flex overflow-hidden p-1 gap-1 relative shadow-inner">
+            <div
+              className="h-24 w-full rounded-md bg-black/80 border border-[var(--line)] overflow-x-auto overscroll-contain p-1 shadow-inner"
+              onWheel={event => {
+                const scrollAmount = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+                if (!scrollAmount) return;
+                event.currentTarget.scrollLeft += scrollAmount;
+                event.preventDefault();
+              }}
+              title="Scroll the mouse wheel to move through memory sections"
+            >
+              <div className="flex h-full min-w-max gap-1">
               {sectionRows.map(sec => {
                 const isSelected = activeRegion?.id === sec.id;
+                const width = Math.max(96, Math.min(360, Math.round((sec.size / mappedBytes) * 920)));
                 return (
                   <button
                     key={sec.id}
                     onClick={() => handleRegionSelection(sec)}
-                    style={{ flex: 1, backgroundColor: sec.color }}
+                    style={{ flex: "0 0 auto", width, backgroundColor: sec.color }}
                     title={`${sec.name} (${sec.parent}): ${fmtSize(sec.size)} (${sec.start} - ${sec.end}) · ${sec.purpose}`}
                     className={`h-full rounded transition flex flex-col items-center justify-center text-black px-2 relative group overflow-hidden ${
                       isSelected ? "ring-2 ring-white scale-[1.01] z-10 shadow-lg" : "opacity-90 hover:opacity-100 hover:scale-[1.01]"
@@ -341,7 +273,7 @@ export default function MemoryMap({
                       {sec.name}
                     </span>
                     <span className="text-[9px] font-mono opacity-80 leading-none mt-0.5 truncate w-full text-center">
-                      {fmtSize(sec.size)}
+                      {fmtSize(sec.size)} · {sec.start}
                     </span>
                   </button>
                 );
@@ -350,7 +282,7 @@ export default function MemoryMap({
               {/* UNALLOCATED HEADROOM INDICATORS */}
               {flashFree > 0 && (
                 <div
-                  style={{ flex: 1 }}
+                  style={{ flex: "0 0 108px" }}
                   className="h-full rounded border border-dashed border-emerald-500/40 bg-emerald-500/5 flex flex-col items-center justify-center text-emerald-400 px-2 text-[9px] font-mono"
                   title={`Unallocated Flash Headroom: ${fmtSize(flashFree)}`}
                 >
@@ -360,7 +292,7 @@ export default function MemoryMap({
               )}
               {ramFree > 0 && (
                 <div
-                  style={{ flex: 1 }}
+                  style={{ flex: "0 0 108px" }}
                   className="h-full rounded border border-dashed border-amber-500/40 bg-amber-500/5 flex flex-col items-center justify-center text-amber-400 px-2 text-[9px] font-mono"
                   title={`Unallocated SRAM Headroom: ${fmtSize(ramFree)}`}
                 >
@@ -368,6 +300,7 @@ export default function MemoryMap({
                   <span className="opacity-75">{fmtSize(ramFree)}</span>
                 </div>
               )}
+              </div>
             </div>
           </div>
 
@@ -379,6 +312,7 @@ export default function MemoryMap({
             <div className="flex-1 min-h-0 p-2 bg-black/40 border border-[var(--line)] rounded-lg">
               <MemoryTreemap
                 data={result.treemap_data || []}
+                height={520}
                 onSelect={leaf => {
                   setSelectedTile(leaf.id);
                   const match = sectionRows.find(r => r.id === leaf.name || r.name === leaf.secName);

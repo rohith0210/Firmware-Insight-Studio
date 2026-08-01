@@ -12,7 +12,7 @@ type Props = {
 };
 
 type LeftTab = "symbols" | "objects" | "sections" | "favorites" | "recent";
-type CenterTab = "source" | "assembly" | "decompiler" | "hex";
+type CenterTab = "source" | "assembly" | "hex";
 type RightSubTab = "info" | "assembly" | "references";
 type BottomConsoleTab = "console" | "trace" | "timeline" | "warnings" | "build" | "statistics" | "navigation" | "events";
 
@@ -327,7 +327,6 @@ export default function InvestigationWorkspace({
               {[
                 { id: "assembly", label: "📜 Assembly" },
                 { id: "source", label: "📜 Source" },
-                { id: "decompiler", label: "🧬 Decompiler EXPERIMENTAL" },
                 { id: "hex", label: "▪ Hex" },
               ].map(tab => (
                 <button
@@ -617,7 +616,6 @@ export default function InvestigationWorkspace({
             <div><span className="text-gray-500">ELF Header:</span> <span className="text-emerald-400 font-bold">Parsed</span></div>
             <div><span className="text-gray-500">Section Headers:</span> <span className="text-emerald-400 font-bold">Parsed</span></div>
             <div><span className="text-gray-500">DWARF Debug Metadata:</span> <span className="text-emerald-400 font-bold">Present</span></div>
-            <div><span className="text-gray-500">Decompiler Engine:</span> <span className="text-cyan-300 font-bold">Active (ARM Disassembly AST)</span></div>
             <div><span className="text-gray-500">Memory Layout:</span> <span className="text-emerald-400 font-bold">Generated</span></div>
           </div>
 

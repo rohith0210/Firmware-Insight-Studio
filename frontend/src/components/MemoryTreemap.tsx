@@ -67,7 +67,7 @@ type Row = { name: string; size: number; x: number; y: number; w: number; h: num
 type Col = { kind: "sec" | "other"; x: number; w: number; headerH: number; frameH: number; secName?: string; secSize?: number; dom?: string; leafRects: LR[]; rows: Row[] };
 type Tip = { x: number; y: number; lines: string[] } | null;
 
-const H = 360, PAD = 2, COLGAP = 6, LEAFGAP = 2, BIG = 0.04;
+const DEFAULT_HEIGHT = 360, PAD = 2, COLGAP = 6, LEAFGAP = 2, BIG = 0.04;
 function leavesOf(sec: any, cap: number): Leaf[] {
   let lv: Leaf[] = (sec.children || []).filter((c: any) => c.size > 0).map((c: any) => ({ name: c.name, size: c.size })).sort((a: Leaf, b: Leaf) => b.size - a.size);
   if (lv.length > cap) { const rest = lv.slice(cap).reduce((a: number, c: Leaf) => a + c.size, 0); lv = lv.slice(0, cap); if (rest > 0) lv.push({ name: "other", size: rest }); }
@@ -77,7 +77,7 @@ function leavesOf(sec: any, cap: number): Leaf[] {
   return lv;
 }
 
-export default function MemoryTreemap({ data, onSelect, selectedId }: { data: any[]; onSelect: (l: LR) => void; selectedId?: string }) {
+export default function MemoryTreemap({ data, onSelect, selectedId, height = DEFAULT_HEIGHT }: { data: any[]; onSelect: (l: LR) => void; selectedId?: string; height?: number }) {
   const [ref, W] = useWidth();
   const [focus, setFocus] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export default function MemoryTreemap({ data, onSelect, selectedId }: { data: an
   }, [data]);
 
   const view = useMemo(() => {
-    const inner: R = { x: PAD, y: PAD, w: Math.max(0, width - PAD * 2), h: H - PAD * 2 };
+    const inner: R = { x: PAD, y: PAD, w: Math.max(0, width - PAD * 2), h: height - PAD * 2 };
     if (focus) {
       const sec = data.find(d => d.name === focus);
       if (!sec) return { mode: "zoom" as const, leafRects: [] as LR[] };
@@ -128,7 +128,7 @@ export default function MemoryTreemap({ data, onSelect, selectedId }: { data: an
       cx += w + COLGAP;
     });
     return { mode: "top" as const, cols };
-  }, [data, focus, width, totalAll, maxLeaf]);
+  }, [data, focus, width, height, totalAll, maxLeaf]);
 
   if (!data?.length) return null;
   const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(1) : "0.0");
@@ -163,8 +163,8 @@ export default function MemoryTreemap({ data, onSelect, selectedId }: { data: an
         </span>
       </div>
       <div className="p-3">
-        <div ref={ref} style={{ width: "100%", height: H }}>
-          <svg width="100%" height={H} style={{ display: "block" }} onMouseLeave={() => setTip(null)}>
+        <div ref={ref} style={{ width: "100%", height }}>
+          <svg width="100%" height={height} style={{ display: "block" }} onMouseLeave={() => setTip(null)}>
             {view.mode === "zoom" ? view.leafRects.map((l, i) => LeafG(l, i, true)) :
               view.cols.map((col, ci) => (
                 <g key={ci}>

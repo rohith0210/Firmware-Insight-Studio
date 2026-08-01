@@ -36,6 +36,67 @@ export type Device = {
   possibleMatches?: string[];
 };
 
+export type ArchitectureProfile = {
+  bits: 8 | 16 | 32 | 64;
+  registerModel: string;
+  callingConvention: string;
+  capabilities: string[];
+  interruptModel: string;
+  isCortexM: boolean;
+};
+
+export function getArchitectureProfile(device: Pick<Device, "architecture" | "core">): ArchitectureProfile {
+  const architecture = `${device.architecture} ${device.core}`.toLowerCase();
+  if (architecture.includes("aarch64") || architecture.includes("arm64")) return {
+    bits: 64,
+    registerModel: "X0–X30, SP, PC, PSTATE; V0–V31 SIMD/FP registers",
+    callingConvention: "AAPCS64 (X0–X7 for arguments, X0 for return)",
+    capabilities: ["A64 fixed-width instruction set", "Exception levels EL0–EL3", "NEON/SIMD and floating point", "Virtual-memory translation support"],
+    interruptModel: "GIC / platform interrupt controller",
+    isCortexM: false,
+  };
+  if (architecture.includes("risc-v") || architecture.includes("riscv")) return {
+    bits: architecture.includes("rv64") ? 64 : 32,
+    registerModel: "x0 (zero), x1 (ra), x2 (sp), x3–x31, pc; optional F/D vector registers",
+    callingConvention: "RISC-V psABI (a0–a7 for arguments, a0–a1 for return)",
+    capabilities: ["Open modular ISA", "Standard integer register file", "Optional M/A/F/D/C extensions", "Platform interrupt controller (PLIC/CLINT where present)"],
+    interruptModel: "RISC-V trap vectors / PLIC",
+    isCortexM: false,
+  };
+  if (architecture.includes("xtensa")) return {
+    bits: 32,
+    registerModel: "a0–a15 windowed registers, PC, SAR, PS; implementation-defined coprocessors",
+    callingConvention: "Xtensa Windowed ABI or Call0 ABI",
+    capabilities: ["Configurable Xtensa ISA", "Register windows", "Optional DSP/SIMD extensions", "SoC-specific interrupt matrix"],
+    interruptModel: "SoC interrupt matrix",
+    isCortexM: false,
+  };
+  if (architecture.includes("x86")) return {
+    bits: architecture.includes("64") ? 64 : 32,
+    registerModel: architecture.includes("64") ? "RAX–R15, RIP, RFLAGS; XMM0–XMM15" : "EAX–EDI, EIP, EFLAGS; XMM registers",
+    callingConvention: architecture.includes("64") ? "System V AMD64 ABI" : "System V i386 ABI",
+    capabilities: ["Variable-length instruction encoding", "Protected/long mode execution", "SIMD extensions", "Platform interrupt controller"],
+    interruptModel: "APIC / platform interrupt controller",
+    isCortexM: false,
+  };
+  if (architecture.includes("avr")) return {
+    bits: 8,
+    registerModel: "R0–R31, X/Y/Z pointer pairs, SREG, SP, PC",
+    callingConvention: "AVR-GCC ABI (R25:R24 return, register arguments)",
+    capabilities: ["Harvard architecture", "32 general-purpose registers", "Memory-mapped I/O", "Interrupt vectors"],
+    interruptModel: "AVR interrupt vector table",
+    isCortexM: false,
+  };
+  return {
+    bits: 32,
+    registerModel: "R0–R12, SP (MSP/PSP), LR (R14), PC (R15), xPSR",
+    callingConvention: "AAPCS / standard EABI (R0–R3 for arguments)",
+    capabilities: ["Thumb/Thumb-2 instruction set", "Hardware multiply and divide", "Nested Vectored Interrupt Controller (NVIC)", "Memory-mapped peripheral I/O"],
+    interruptModel: "Cortex-M NVIC vector table",
+    isCortexM: true,
+  };
+}
+
 const K = 1024;
 const M = 1024 * 1024;
 const C = {
