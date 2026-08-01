@@ -43,16 +43,14 @@ export default function Disassembler({
     return funcs[0] || "main";
   });
 
-  // Mode Selection: Static Analysis Mode (default) vs Live Debug Session Mode
-  const [isLiveDebug, setIsLiveDebug] = useState<boolean>(false);
   const [dis, setDis] = useState<Dis | null>(null);
   const [disError, setDisError] = useState<{ reason?: string; message?: string } | null>(null);
   const [loadingDis, setLoadingDis] = useState<boolean>(false);
   const [rightTab, setRightTab] = useState<"registers" | "stack" | "peripherals">("registers");
   const [bps, setBps] = useState<Set<number>>(new Set());
   const [log, setLog] = useState<Log[]>([
-    { c: "a", t: "Firmware Insight · Static Analysis & Execution Workbench Initialized" },
-    { c: "m", t: "Mode: Static Analysis Mode. Load a live debugging session (GDB/OpenOCD) for live CPU stepping." },
+    { c: "a", t: "Firmware Insight Studio v2.0 · Offline Firmware Analysis Engine Initialized" },
+    { c: "m", t: "Mode: Firmware Introspection & Instruction Execution Engine Active." },
   ]);
   const [cmd, setCmd] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -73,10 +71,6 @@ export default function Disassembler({
   const pcRef = useRef<number | null>(pc);
   const logRef = useRef<HTMLDivElement>(null);
   const activePcRef = useRef<HTMLDivElement | null>(null);
-
-  const [wsConnected, setWsConnected] = useState<boolean>(false);
-
-  const wsRef = useRef<WebSocket | null>(null);
   const disasmCacheRef = useRef<Map<string, Dis>>(new Map());
 
   // Symbol resolution helper: maps an arbitrary memory address to its containing symbol name
@@ -96,62 +90,6 @@ export default function Disassembler({
     return match ? match.name : null;
   };
 
-  const connectLocalAgent = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      push("a", "🟢 [LOCAL AGENT ACTIVE] Session connected to ws://127.0.0.1:9001");
-      return;
-    }
-
-    try {
-      push("m", "🔌 [LOCAL AGENT] Connecting to Local Debug Agent on ws://127.0.0.1:9001...");
-      const ws = new WebSocket("ws://127.0.0.1:9001");
-
-      ws.onopen = () => {
-        setWsConnected(true);
-        setIsLiveDebug(true);
-        wsRef.current = ws;
-        push("a", "🟢 [CONNECTED] Live Debugger active (ST-Link / OpenOCD:3333)");
-        ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if ((msg.type === "REGISTERS" || msg.type === "STEP_COMPLETE" || msg.type === "HALTED" || msg.type === "RESET_COMPLETE") && msg.data) {
-            setRegs(prev => ({ ...prev, ...msg.data }));
-            if (msg.data.PC !== undefined) {
-              setPc(msg.data.PC);
-              pcRef.current = msg.data.PC;
-              if (msg.type === "STEP_COMPLETE") {
-                push("a", `⚡ [LIVE HARDWARE STEP] PC ➔ 0x${msg.data.PC.toString(16).padStart(8, "0")}`);
-              }
-            }
-            if (msg.type === "HALTED" || msg.type === "RESET_COMPLETE" || msg.type === "STEP_COMPLETE") {
-              setStatus("halted");
-            }
-          } else if (msg.type === "RUN_STARTED") {
-            setStatus("running");
-          }
-        } catch (e) {}
-      };
-
-      ws.onerror = () => {
-        setWsConnected(false);
-        setIsLiveDebug(false);
-        push("e", "🔴 [DISCONNECTED] Could not reach Local Debug Agent on ws://127.0.0.1:9001.");
-      };
-
-      ws.onclose = () => {
-        setWsConnected(false);
-        setIsLiveDebug(false);
-        wsRef.current = null;
-      };
-    } catch (e) {
-      setWsConnected(false);
-      setIsLiveDebug(false);
-    }
-  };
-
   // Auto-scroll disassembly view to active PC line & Auto-follow PC across symbol boundaries
   useEffect(() => {
     if (pc !== null) {
@@ -163,7 +101,7 @@ export default function Disassembler({
       }
 
       // Check if current PC address is within the currently rendered disassembly view
-      if (isLiveDebug && dis && dis.instructions && dis.instructions.length > 0) {
+      if (dis && dis.instructions && dis.instructions.length > 0) {
         const pcClean = pc & ~1;
         const inView = dis.instructions.some(i => (i.addr & ~1) === pcClean);
         if (!inView) {
@@ -172,12 +110,12 @@ export default function Disassembler({
           const targetName = resolvedSym || `0x${pcClean.toString(16).padStart(8, "0")}`;
           if (name !== targetName) {
             setName(targetName);
-            push("b", `⚡ [LIVE CPU BRANCH] PC moved to ${targetName} (0x${pcClean.toString(16)}).`);
+            push("b", `⚡ [CPU BRANCH] PC moved to ${targetName} (0x${pcClean.toString(16)}).`);
           }
         }
       }
     }
-  }, [pc, isLiveDebug, dis, name, result]);
+  }, [pc, dis, name, result]);
 
   const push = (c: Log["c"], t: string) => {
     setLog(prev => [...prev, { c, t }]);
@@ -274,15 +212,8 @@ export default function Disassembler({
     }
   }, [regs]);
 
-  // STEP OVER (Offline instruction advance or Live GDB 'n')
+  // STEP OVER (Offline instruction advance)
   const handleStepOver = (): boolean => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
-      wsRef.current.send(JSON.stringify({ type: "STEP_OVER" }));
-      push("o", "⤼ Step Over ('n')");
-      return true;
-    }
-
-    // Offline Stepping Logic with realistic ARM Cortex-M instruction decoding
     if (dis && dis.instructions && dis.instructions.length > 0) {
       const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
 
@@ -342,7 +273,7 @@ export default function Disassembler({
         return nextRegs;
       });
 
-      push("o", `⤼ [OFFLINE STEP] PC ➔ 0x${nextAddr.toString(16).padStart(8, "0")} (${nextInstr ? nextInstr.mn + " " + nextInstr.op : ""})`);
+      push("o", `⤼ [STEP OVER] PC ➔ 0x${nextAddr.toString(16).padStart(8, "0")} (${nextInstr ? nextInstr.mn + " " + nextInstr.op : ""})`);
       return true;
     }
     return false;
@@ -350,13 +281,6 @@ export default function Disassembler({
 
   // STEP INTO (Follow call target or advance instruction)
   const handleStepInto = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
-      wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
-      push("o", "⤵ Step Into ('s')");
-      return;
-    }
-
-    // Offline Step Into Logic
     if (dis && dis.instructions && dis.instructions.length > 0) {
       const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
       const currInstr = dis.instructions.find(i => (i.addr & ~1) === currentPc);
@@ -369,7 +293,7 @@ export default function Disassembler({
           setPc(targetSym.value);
           pcRef.current = targetSym.value;
           setRegs(prev => ({ ...prev, PC: targetSym.value, LR: currentPc + 4 }));
-          push("b", `⤵ [OFFLINE STEP INTO] Branching to ${targetSym.name} @ 0x${targetSym.value.toString(16)}`);
+          push("b", `⤵ [STEP INTO] Branching to ${targetSym.name} @ 0x${targetSym.value.toString(16)}`);
           return;
         }
       }
@@ -380,23 +304,17 @@ export default function Disassembler({
   // RUN / CONTINUE (Toggle active execution loop)
   const handleRunToggle = () => {
     if (status === "running") {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
-        wsRef.current.send(JSON.stringify({ type: "HALT" }));
-      }
       setStatus("halted");
       push("b", "⏸ Execution Halted");
     } else {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
-        wsRef.current.send(JSON.stringify({ type: "RUN" }));
-      }
       setStatus("running");
-      push("a", "▶ Target Running (Line-by-Line Execution Engine)");
+      push("a", "▶ Target Running (Instruction Execution Loop)");
     }
   };
 
   // Auto-step interval timer with Breakpoint enforcement when status === "running"
   useEffect(() => {
-    if (status !== "running" || isLiveDebug) return;
+    if (status !== "running") return;
 
     const currentPcClean = pc !== null ? (pc & ~1) : 0;
     if (bps.has(currentPcClean) || bps.has(currentPcClean | 1)) {
@@ -417,7 +335,7 @@ export default function Disassembler({
     }, 450);
 
     return () => clearInterval(interval);
-  }, [status, isLiveDebug, dis, pc, bps]);
+  }, [status, dis, pc, bps]);
 
   // RESET TARGET (Resets MCU target & jumps directly to main() / main.c)
   const handleReset = () => {
@@ -440,13 +358,7 @@ export default function Disassembler({
       R3: 0x00000000,
     }));
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
-      wsRef.current.send(JSON.stringify({ type: "RESET" }));
-      push("a", `↺ Target Reset (monitor reset halt) ➔ Jumped directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
-      return;
-    }
-
-    push("a", `↺ [RESET TARGET] Reset MCU target ➔ Switched view directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
+    push("a", `↺ [RESET TARGET] Reset target ➔ Switched view directly to '${mainName}' @ 0x${mainAddr.toString(16)}`);
   };
 
   const toggleBp = (addr: number) => {
@@ -489,14 +401,10 @@ export default function Disassembler({
         push("e", "Usage: break <hex_address>");
       }
     } else if (cmdName === "regs" || cmdName === "info") {
-      if (isLiveDebug) {
-        push(
-          "a",
-          `Registers: R0=0x${(regs.R0 || 0).toString(16)} R1=0x${(regs.R1 || 0).toString(16)} SP=0x${(regs.SP || 0).toString(16)} PC=0x${(regs.PC || 0).toString(16)}`
-        );
-      } else {
-        push("e", "Runtime register values unavailable in Static Analysis Mode.");
-      }
+      push(
+        "a",
+        `Registers: R0=0x${(regs.R0 || 0).toString(16)} R1=0x${(regs.R1 || 0).toString(16)} SP=0x${(regs.SP || 0).toString(16)} PC=0x${(regs.PC || 0).toString(16)}`
+      );
     } else if (cmdName === "help" || cmdName === "?") {
       push("b", "════════════════════════════════════════════════════");
       push("b", "  Cortex-M Execution REPL Debugger Help Reference   ");
@@ -517,83 +425,7 @@ export default function Disassembler({
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg)] text-[var(--fg)] font-sans overflow-hidden select-none">
-      {/* 4-STATE STATUS BAR: STATIC ANALYSIS | LOCAL AGENT CONNECTED | LIVE RUNNING | LIVE HALTED */}
-      {!wsConnected || !isLiveDebug ? (
-        <div className="bg-slate-900/80 border-b border-slate-700/50 px-4 py-2 text-slate-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-slate-500" />
-              Static Analysis
-            </span>
-            <span className="text-gray-400">Inspecting binary metadata. Connect Local Agent for live CPU stepping & hardware register state.</span>
-          </div>
-          <button
-            onClick={connectLocalAgent}
-            className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
-          >
-            <span>🔌</span> Connect Local Debug Agent
-          </button>
-        </div>
-      ) : status === "running" ? (
-        <div className="bg-emerald-950/60 border-b border-emerald-500/30 px-4 py-2 text-emerald-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              Live Running
-            </span>
-            <span>Target executing at full hardware clock speed ('c'). Click Pause (Interrupt \x03) to halt.</span>
-          </div>
-          <button
-            onClick={handleRunToggle}
-            className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 whitespace-nowrap"
-          >
-            <span>⏸</span> Pause Target
-          </button>
-        </div>
-      ) : status === "halted" ? (
-        <div className="bg-amber-950/60 border-b border-amber-500/30 px-4 py-2 text-amber-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <span className="px-2.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              Live Halted
-            </span>
-            <span>CPU Halted at PC 0x{(pc || 0).toString(16).padStart(8, "0")}. Disassembly & registers synced.</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleStepOver}
-              className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[11px] transition border border-white/10"
-            >
-              ⤼ Step Over
-            </button>
-            <button
-              onClick={handleRunToggle}
-              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5"
-            >
-              <span>▶</span> Continue
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-blue-950/60 border-b border-blue-500/30 px-4 py-2 text-blue-300 mono text-xs flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <span className="px-2.5 py-0.5 rounded bg-blue-500/20 border border-blue-500/40 text-blue-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-blue-400" />
-              Local Agent Connected
-            </span>
-            <span>Connected to Local Debug Agent (ws://127.0.0.1:9001 ➔ OpenOCD:3333 ➔ ST-Link). Ready for commands.</span>
-          </div>
-          <button
-            onClick={() => {
-              setIsLiveDebug(false);
-              push("m", "[STATIC MODE] Disconnected live debugger session. Reverted to Static Analysis Mode.");
-            }}
-            className="px-3 py-1 rounded bg-black/40 border border-white/20 text-gray-300 hover:text-white font-bold text-[11px] transition whitespace-nowrap"
-          >
-            Disconnect Debugger
-          </button>
-        </div>
-      )}
+      {/* CLEAN EXECUTION WORKSPACE CONTAINER */}
 
       {/* TOP EXECUTION TOOLBAR & CONTROLS */}
       <div className="bg-[var(--panel)] border-b border-[var(--line)] px-4 py-2 flex items-center justify-between gap-4 flex-shrink-0 relative z-30">
@@ -642,19 +474,6 @@ export default function Disassembler({
               </div>
             )}
           </div>
-
-          {/* LOCAL AGENT HANDSHAKE BUTTON */}
-          <button
-            onClick={connectLocalAgent}
-            title="Connect to Local Debug Agent (ws://127.0.0.1:9001) for live ST-Link hardware stepping"
-            className={`mono text-xs px-2.5 py-1 rounded border font-bold transition flex items-center gap-1.5 ${
-              wsConnected
-                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
-                : "bg-cyan-500/10 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20"
-            }`}
-          >
-            <span>{wsConnected ? "🟢 Local Agent Active" : "🔌 Connect Local Agent"}</span>
-          </button>
         </div>
 
         {/* DEBUGGER CONTROLS (ACTIVE FOR BOTH LIVE & OFFLINE INTERACTION) */}
@@ -722,7 +541,7 @@ export default function Disassembler({
               <span>Disassembly Listing // {name}</span>
             </div>
             <div className="mono text-[10px] text-[var(--mut)]">
-              {isLiveDebug ? `PC: 0x${(pc || 0).toString(16)} · Steps: ${steps}` : "Static Disassembly View"}
+              PC: 0x{(pc || 0).toString(16).padStart(8, "0")} · Steps: {steps}
             </div>
           </div>
 
@@ -742,10 +561,8 @@ export default function Disassembler({
                       key={ins.addr}
                       ref={isCurrentPc ? activePcRef : null}
                       onClick={() => {
-                        if (isLiveDebug) {
-                          setPc(ins.addr);
-                          pcRef.current = ins.addr;
-                        }
+                        setPc(ins.addr);
+                        pcRef.current = ins.addr;
                       }}
                       className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${isCurrentPc
                           ? "bg-[rgba(51,214,194,0.35)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg shadow-[var(--a)]/20"
@@ -867,8 +684,8 @@ export default function Disassembler({
             <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
               <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between items-center">
                 <span>CPU Core Registers</span>
-                <span className={isLiveDebug || wsConnected ? "text-emerald-400 font-bold flex items-center gap-1" : "text-cyan-400 font-bold"}>
-                  {isLiveDebug || wsConnected ? "🟢 Live GDB RSP" : "⚡ Active Stepping Engine"}
+                <span className="text-cyan-400 font-bold">
+                  ⚡ Active Stepping Engine
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 mono text-xs">
@@ -905,7 +722,7 @@ export default function Disassembler({
             <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-3 mono text-xs">
               <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between">
                 <span>Call Stack / Frames</span>
-                <span className="text-[var(--a)]">{isLiveDebug || wsConnected ? "🟢 Live GDB Frame" : "Static Frame"}</span>
+                <span className="text-[var(--a)]">Active Frame</span>
               </div>
               <div className="space-y-2">
                 <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
@@ -1063,9 +880,9 @@ export default function Disassembler({
             <span>Debugger Command Line Terminal (Cortex-M REPL Console)</span>
           </div>
           <div className="mono text-[10px] text-[var(--mut)] flex items-center gap-3">
-            <span>STATUS: <strong className={isLiveDebug ? "text-emerald-400" : "text-amber-400"}>{isLiveDebug ? "LIVE DEBUGGER" : "STATIC ANALYSIS"}</strong></span>
+            <span>STATUS: <strong className="text-emerald-400">ACTIVE</strong></span>
             <span>|</span>
-            <span>PORT: <strong>GDB-STLINK:3333</strong></span>
+            <span>ENGINE: <strong className="text-cyan-400">OFFLINE FIRMWARE ENGINE</strong></span>
           </div>
         </div>
 
