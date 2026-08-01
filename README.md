@@ -1,8 +1,8 @@
 <p align="center">
   <h1 align="center">Firmware Insight Studio v2.0</h1>
   <p align="center">
-    <strong>Offline Virtual Embedded Debugger, Firmware Replay Engine &amp; Introspection IDE</strong><br/>
-    Turn any microcontroller ELF binary into a fully interactive, professional embedded IDE debugging session — no hardware required.
+    <strong>A Desktop-Class Embedded Firmware Replay &amp; Introspection IDE</strong><br/>
+    Build a professional desktop-class embedded engineering application that happens to run in a browser.
   </p>
   <p align="center">
     <a href="https://github.com/rohith0210/Firmware-Insight-Studio/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/></a>
@@ -16,101 +16,172 @@
 
 ---
 
-## ⚡ What is Firmware Insight Studio v2.0?
+## 🏛️ Engineering Vision & Architecture
 
-**Firmware Insight Studio v2.0** is an **Offline Virtual Embedded Debugger & Firmware Replay IDE**. 
+> **"Do not try to imitate a website. Build a professional desktop-class embedded engineering application that happens to run in a browser."**
 
-Instead of requiring physical target hardware, ST-Link programmers, OpenOCD, or GDB servers, Firmware Insight Studio parses the uploaded `.elf`, `.axf`, or `.out` binary file and builds a **Virtual Execution Engine**. The uploaded firmware itself becomes an active, interactive debugging session that visually and functionally matches **STM32CubeIDE**, **Keil uVision**, or **VS Code Cortex Debug**.
+**Firmware Insight Studio** is a professional Embedded Firmware Analysis and Replay IDE comparable in UX quality, precision, and presentation to industry-standard engineering software:
+
+* **STM32CubeIDE**
+* **Keil μVision**
+* **Segger Ozone**
+* **Ghidra**
+* **Binary Ninja**
+* **IDA Pro**
+* **VS Code**
+
+---
+
+## 🎯 Product Purpose & Zero-Hardware Philosophy
+
+**Purpose**: Upload an embedded firmware ELF binary (`.elf`, `.axf`, `.out`) and explore, inspect, and step through it like a professional embedded IDE.
+
+It is **NOT** a live hardware debugger and does **NOT** require:
+* ❌ ST-Link
+* ❌ OpenOCD
+* ❌ GDB / GDB Server
+* ❌ JLink
+* ❌ Local Debug Agent
+* ❌ Physical hardware / Target boards
+
+Everything is dynamically reconstructed from the uploaded ELF binary and embedded DWARF debug information. Think of it as an **Offline Firmware Replay IDE** instead of a live debugger.
+
+---
+
+## 💡 Core Philosophy: Dynamic & Truthful Replay
+
+* **Upload Driven**: The uploaded ELF becomes the entire workspace. Nothing exists before the user uploads an ELF file.
+* **100% Dynamic**: After upload, every view (Symbols, Source, Assembly, CFG, Memory Map, Stack Frames) is generated dynamically from that ELF.
+* **Zero Fake Data**: Never preload fake data, example firmware, fake source code, or synthetic assembly.
+* **Truthful Reporting**: If information does not exist inside the ELF/DWARF, the workspace explicitly reports *"No information available"* instead of inventing fake values.
+
+---
+
+## 💻 Professional Engineering UI/UX Design
+
+The interface is engineered to feel like **VS Code + STM32CubeIDE + Ghidra + Binary Ninja**:
+
+* 🎨 **Dark Theme**: Dark, high-contrast, minimal engineering aesthetic.
+* ⚡ **Functional Layout**: Clean split viewports, precise panel borders, monospace typography.
+* 🚫 **No Marketing / Dashboard Style**: No oversized marketing cards, no giant buttons, no unnecessary animations.
+* 🔍 **Focus on Code**: The core focus remains strictly on the code, assembly, control flow, and memory layout.
+
+---
+
+## 🧩 Synchronized Workspace Panels
+
+The IDE workspace provides synchronized panels that stay aligned to the active Program Counter (`PC`):
 
 ```text
-                               Firmware Insight Studio v2.0
-                                             │
-                                   Upload microcontroller.elf
-                                             │
-                                   ELF + DWARF Parser Engine
-                                             │
-      ┌────────────────────────┬─────────────┴──────────────┬────────────────────────┐
-      │                        │                            │                        │
-      ▼                        ▼                            ▼                        ▼
- Symbol Explorer          Source View                 Assembly View            Memory Layout
-      │                        │                            │                        │
-      └────────────────────────┴─────────────┬──────────────┴────────────────────────┘
-                                             ▼
-                                  Virtual Execution Engine
-                                             │
-                  ├──────────────────────────┼──────────────────────────┤
-                  ▼                          ▼                          ▼
-       Step Into / Step Over      Call Lineage & Call Stack    Virtual Register State
-       (DWARF + Disassembly)      (Stack Frames & Local Vars)  (CubeIDE Amber Highlights)
+  Symbol Explorer ──► Source Code ──► Assembly ──► Decompiler
+         │                                              │
+         ▼                                              ▼
+    Call Graph ──► Memory Map ──► Sections ──► Reconstructed Registers
+                                                        │
+                                                        ▼
+                                           Variables & Stack Frames
 ```
 
----
-
-## 🚀 Key Features & Architectural Highlights
-
-### 1. ⚡ Pure Offline Virtual Debugger & Replay Engine
-- **No Physical Hardware Required**: Drop any microcontroller ELF file to step line-by-line through machine instructions and source lines offline.
-- **Full Stepping Toolbar**:
-  - `▶ Run` / `⏸ Pause`: Toggles continuous instruction execution with automatic breakpoint checking.
-  - `↷ Step Over`: Advances instruction/source line within the current function listing.
-  - `⤶ Step Into`: Follows subroutine call targets (`bl`, `blx`, `call`), pushes a new frame onto the Call Stack, and sets PC to the target function's entry line.
-  - `⤴ Step Out`: Pops the top Call Stack frame and returns Virtual PC to the Link Register (`LR`).
-  - `↺ Reset Target`: Resets Virtual PC directly to `main()` line 1 and clears the Call Stack.
-
-### 2. 📍 Call Lineage & Entry Trace Banner
-- Positioned directly above the disassembly viewport:
-  - **Caller Origin**: `Called from: Reset_Handler ➔ main (@ 0x080001c5)`
-  - **Target Entry**: `HAL_Init (@ 0x08000410)`
-  - **Return Vector**: `RETURN TARGET (LR): 0x0800033c`
-- Provides instant visual lineage showing where execution entered from and where it will return upon exit.
-
-### 3. 🥞 Call Stack & Local Variable Inspector
-- Renders active stack frames (`FRAME #0`, `FRAME #1`, `FRAME #2`) under the right sidebar tab:
-  - Function names, entry addresses, and caller source offsets.
-  - **Local Variables & Scope**: Displays SRAM addresses (`0x2000xxxx`), types (`uint32_t`, `HAL_StatusTypeDef`), and virtual variable states.
-
-### 4. 🎛️ Virtual CPU Core Registers (CubeIDE-Style)
-- Simulates ARM Cortex-M 16-register payload (`R0–R12`, `SP`, `LR`, `PC`, `xPSR`, `PRIMASK`).
-- **Amber Change Highlights**: Registers modified by current instructions glow inCubeIDE-style amber text (`bg-amber-500/30 border-amber-400 text-amber-200`).
-- **Thumb-2 LSB Address Masking**: Enforces `(pc & ~1) === (ins.addr & ~1)` so Thumb-2 LSB addresses remain 100% aligned with glowing green instruction highlights.
-
-### 5. 📄 Synchronized Code Investigator (C Source View)
-- **Source View (`main.c` / C Source)**: Highlighting active C source code line (`HAL_Init(); ◄ CURRENT`).
-- **Assembly View**: Thumb-2 assembly listing with branch comments and MMIO peripheral target annotations.
-- **Hex Viewer**: Raw machine code byte display synced with memory addresses.
-
-### 6. 📊 Memory Map, Treemaps & Peripheral MMIO Inspector
-- **Address-True Memory Layout**: Flash (`.text`, `.rodata`) vs SRAM (`.data`, `.bss`) physical boundaries.
-- **Squarified Treemap**: Visual size allocation per translation unit.
-- **STM32 Special Function Register (SFR) Maps**: Interactive register maps for `GPIOA`, `GPIOB`, `GPIOC`, `RCC`, `SysTick`, `NVIC`, `USART1`, `TIM2`.
+1. **Symbol Explorer**: Filterable function and global variable table with translation unit and section scope.
+2. **Source Code View**: DWARF-mapped C source lines (`main.c` / C source) with line-by-line active highlighting.
+3. **Assembly View**: Thumb-2 assembly listing with branch target comments and MMIO peripheral annotations.
+4. **Call Graph**: ReactFlow-powered control flow graph (CFG) visualizing function invocation edges.
+5. **Memory Map & Hex Viewer**: Physical Flash (`.text`, `.rodata`) and SRAM (`.data`, `.bss`) section boundaries.
+6. **Reconstructed Registers**: Virtual CPU core register payload (`R0–R12`, `SP`, `LR`, `PC`, `xPSR`) with CubeIDE-style amber text highlights for modified registers.
+7. **Variables & Call Stack**: Expandable frame stack (`FRAME #0`, `FRAME #1`) displaying caller lineage, return addresses (`LR`), and scoped SRAM local variables.
 
 ---
 
-## 📂 Codebase Directory & File Summary
+## 🔄 Deterministic Upload & Replay Flow
+
+```text
+Initial Landing Screen
+          │
+          ▼
+   Upload ELF Binary (.elf / .axf / .out)
+          │
+          ▼
+   Parse ELF Headers & Sections
+          │
+          ▼
+   Parse DWARF Debug Metadata
+          │
+          ▼
+   Generate Symbol Table & Object Map
+          │
+          ▼
+   Disassemble Machine Code (Capstone Engine)
+          │
+          ▼
+   Generate Control Flow Graph (CFG)
+          │
+          ▼
+   Open Embedded IDE Workspace
+```
+
+*The IDE workspace never opens before an ELF file has been loaded.*
+
+---
+
+## ⏩ Offline Replay & Navigation
+
+The execution workspace simulates firmware navigation rather than executing hardware clock cycles:
+
+1. **Select a Function**: Select `main` or any subroutine from the Symbol Explorer.
+2. **View Source & Assembly**: View corresponding C source lines and synchronized Capstone assembly instructions.
+3. **View Call Lineage**: Read the Call Lineage Banner (`Called from: Reset_Handler ➔ main @ 0x080001c5 | RETURN TARGET: 0x0800033c`).
+4. **Step Through Replay**: Use `Step Into` ⤶, `Step Over` ↷, `Step Out` ⤴, `Run` ▶, and `Reset` ↺ to navigate subroutines, push/pop Call Stack frames, and trace reconstructed register states.
+
+---
+
+## 📐 Product Improvement Rule
+
+Whenever improving the project, we adhere to a single architectural principle:
+
+> **Always ask:**
+> * *Would STM32CubeIDE do this?*
+> * *Would Ghidra do this?*
+> * *Would Binary Ninja do this?*
+> * *Would IDA Pro do this?*
+>
+> **If the answer is no, don't implement it.**
+
+---
+
+## 🛠️ Code Quality & Architecture Standards
+
+* **Refactoring over Rewriting**: Preserve modular components and existing API contracts.
+* **Modular Components**: Separate UI rendering, state management, and disassembler logic.
+* **Clean Architecture**: Eliminate dead code, duplicated logic, and ad-hoc utility functions.
+* **Scalable Stack**: FastAPI 0.115 backend + React 18 & TypeScript 5 frontend.
+
+---
+
+## 📂 Project Directory Structure
 
 ```text
 Firmware-Insight-Studio/
 ├── backend/
-│   ├── main.py                 # FastAPI backend server (pyelftools, Capstone disassembly, DWARF parsing)
+│   ├── main.py                 # FastAPI backend (pyelftools, Capstone disassembly, DWARF parsing)
 │   ├── requirements.txt        # Python backend dependencies
-│   └── venv/                   # Python virtual environment
+│   └── venv/                   # Virtual environment
 ├── frontend/
-│   ├── index.html              # HTML5 entry page
-│   ├── package.json            # Vite + React dependencies & scripts
-│   ├── vite.config.ts          # Vite build configuration
+│   ├── index.html              # HTML5 entry point
+│   ├── package.json            # Vite + React dependencies
+│   ├── vite.config.ts          # Vite configuration
 │   └── src/
-│       ├── App.tsx             # Primary navigation shell & state dispatcher
-│       ├── apiConfig.ts        # Backend API URL resolver
+│       ├── App.tsx             # Main IDE shell & dispatcher
+│       ├── apiConfig.ts        # Backend API resolver
 │       ├── components/
-│       │   ├── WelcomeDropZone.tsx      # Initial clean drag-and-drop landing screen
-│       │   ├── InvestigationWorkspace.tsx # Code Investigator (Source, Assembly, Hex, Symbol Inspector)
-│       │   ├── Disassembler.tsx         # Virtual Debugger & Instruction Stepping Workbench
-│       │   ├── Overview.tsx             # High-level binary diagnostics & RAM/Flash utilization gauges
+│       │   ├── WelcomeDropZone.tsx      # Clean upload landing screen
+│       │   ├── InvestigationWorkspace.tsx # Code Investigator (Source, Assembly, Hex, Symbols)
+│       │   ├── Disassembler.tsx         # Execution & Stepping Workbench
+│       │   ├── Overview.tsx             # High-level binary diagnostics & RAM/Flash utilization
 │       │   ├── MemoryMap.tsx            # Physical memory layout & squarified size treemaps
-│       │   ├── CallGraph.tsx            # ReactFlow interactive function call tree
-│       │   ├── SymbolExplorer.tsx       # Filterable symbol table browser
+│       │   ├── CallGraph.tsx            # ReactFlow function call graph
+│       │   ├── SymbolExplorer.tsx       # Symbol table browser
 │       │   ├── SectionTable.tsx         # ELF section header inspector
-│       │   ├── ObjectFiles.tsx          # Object file / compilation unit breakdown
+│       │   ├── ObjectFiles.tsx          # Translation unit / object file breakdown
 │       │   ├── Peripherals.tsx          # Hardware peripheral utilization grid
 │       │   ├── IsrAnalyzer.tsx          # Interrupt vector table & ISR priority analyzer
 │       │   ├── Compare.tsx              # Differential build comparator (v1 vs v2 ELF)
@@ -118,16 +189,16 @@ Firmware-Insight-Studio/
 │       │   └── Ribbon.tsx               # Top navigation ribbon
 │       └── utils/
 │           ├── VirtualExecutionEngine.ts # Offline Virtual Debugger state machine & frame stack
-│           ├── DebuggerEngine.ts        # Event subscription manager for PC state
-│           └── devices.ts               # Microcontroller hardware definitions (STM32, NRF52, RP2040, etc.)
+│           ├── DebuggerEngine.ts        # PC state event subscriber
+│           └── devices.ts               # Target MCU hardware profiles (STM32, NRF52, RP2040, etc.)
 └── README.md                   # Project documentation
 ```
 
 ---
 
-## 🛠️ Architecture & Microcontroller Support
+## ⚡ Supported Microcontrollers & Architectures
 
-| Target Architecture | Variant / ISA | Disassembly Engine | Virtual Execution Support |
+| Target Architecture | Variant / ISA | Decoder Engine | Replay Support |
 |:---|:---|:---|:---|
 | **ARM Cortex-M** | ARMv6-M, ARMv7-M, ARMv8-M (Thumb/Thumb-2) | Capstone Engine | **Full Interactive Replay** |
 | **ARM Cortex-A** | ARMv7-A (ARM / Thumb) | Capstone Engine | **Full** |
@@ -138,41 +209,29 @@ Firmware-Insight-Studio/
 
 ---
 
-## 💻 Local Installation & Setup
+## 🚀 Quickstart Guide
 
 ### Prerequisites
-- **Python**: 3.10 or higher
-- **Node.js**: 18.0 or higher (`npm`)
+- **Python**: 3.10+
+- **Node.js**: 18.0+
 
-### 1. Clone & Setup Backend
+### 1. Launch Backend
 ```bash
-git clone https://github.com/rohith0210/Firmware-Insight-Studio.git
-cd Firmware-Insight-Studio/backend
-
-# Create and activate Python virtual environment
+cd backend
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Start FastAPI backend server
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### 2. Setup & Launch Frontend
-Open a new terminal window:
+### 2. Launch Frontend
 ```bash
-cd Firmware-Insight-Studio/frontend
-
-# Install dependencies
+cd frontend
 npm install
-
-# Launch Vite development server
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser, drag and drop any microcontroller `.elf` file, and experience **Firmware Insight Studio v2.0**!
+Open `http://localhost:5173`, drop your microcontroller `.elf` binary, and explore your firmware inside **Firmware Insight Studio**.
 
 ---
 
