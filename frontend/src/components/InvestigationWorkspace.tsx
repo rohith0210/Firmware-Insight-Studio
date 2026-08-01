@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import type { ParseResult } from "../App";
-import { getApiBaseUrl } from "../apiConfig";
+import { DebuggerEngine, type DebuggerStateSnapshot } from "../utils/DebuggerEngine";
 import HardwareSetupModal from "./HardwareSetupModal";
 
 type Props = {
@@ -14,15 +14,6 @@ type Props = {
 type LeftTab = "symbols" | "objects" | "sections" | "favorites" | "recent";
 type CenterTab = "source" | "assembly" | "decompiler" | "analysis" | "hex";
 type RightTab = "registers" | "stack" | "variables" | "peripherals";
-
-type DebugStatus = "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "RUNNING" | "HALTED" | "STEPPING";
-
-interface GdbLog {
-  id: string;
-  time: string;
-  type: "cmd" | "rsp" | "info" | "error";
-  text: string;
-}
 
 export default function InvestigationWorkspace({
   result,
@@ -39,56 +30,31 @@ export default function InvestigationWorkspace({
   const [splitView, setSplitView] = useState<boolean>(false);
   const [showSetupModal, setShowSetupModal] = useState<boolean>(false);
 
-  // Debugger Engine State (Single Source of Truth)
-  const [debugStatus, setDebugStatus] = useState<DebugStatus>("DISCONNECTED");
-  const [pc, setPc] = useState<number>(0x0800035c);
-  const [sp, setSp] = useState<number>(0x20004000);
-  const [registers, setRegisters] = useState<Record<string, number>>({
-    R0: 0x20000100, R1: 0x00000000, R2: 0x40021000, R3: 0x00000001,
-    R4: 0x00000000, R5: 0x00000000, R6: 0x00000000, R7: 0x20004000,
-    R8: 0x00000000, R9: 0x00000000, R10: 0x00000000, R11: 0x00000000,
-    R12: 0x00000000, SP: 0x20004000, LR: 0x080001b1, PC: 0x0800035c,
-    xPSR: 0x61000000, PRIMASK: 0x00000000
-  });
-  const [prevRegisters, setPrevRegisters] = useState<Record<string, number>>({});
-  const [changedRegs, setChangedRegs] = useState<Set<string>>(new Set());
+  // Single Source of Truth - Debugger Engine Snapshot
+  const [snapshot, setSnapshot] = useState<DebuggerStateSnapshot>(() =>
+    DebuggerEngine.getInstance().getState()
+  );
+
+  // Subscribe to DebuggerEngine state stream
+  useEffect(() => {
+    const engine = DebuggerEngine.getInstance();
+    if (result?.checksum) {
+      engine.setChecksum(result.checksum);
+    }
+    const unsubscribe = engine.subscribe(newState => {
+      setSnapshot({ ...newState });
+    });
+    return () => unsubscribe();
+  }, [result?.checksum]);
 
   // Breakpoints & Console State
   const [breakpoints, setBreakpoints] = useState<Set<number>>(new Set());
-  const [gdbLogs, setGdbLogs] = useState<GdbLog[]>([
-    { id: "1", time: new Date().toLocaleTimeString(), type: "info", text: "Embedded IDE Engine initialized. Target MCU: STM32F103C8." },
-    { id: "2", time: new Date().toLocaleTimeString(), type: "info", text: "Ready to connect to Local Debug Agent (ws://127.0.0.1:9001)." }
-  ]);
   const [gdbInput, setGdbInput] = useState("");
-
-  // WebSocket Connection Reference
-  const wsRef = useRef<WebSocket | null>(null);
   const consoleBottomRef = useRef<HTMLDivElement | null>(null);
   const activePcLineRef = useRef<HTMLDivElement | null>(null);
 
-  // Safe Symbols & Section Data
+  // Safe Symbols Data
   const symbols = useMemo(() => (result && Array.isArray(result.symbols) ? result.symbols : []), [result]);
-  const summary = useMemo(() => (result && result.summary ? result.summary : {}), [result]);
-  const apiBase = getApiBaseUrl();
-
-  // PC Line Info Mapping
-  const [pcInfo, setPcInfo] = useState<{
-    pc: string;
-    function: string;
-    func_addr: string;
-    func_size: number;
-    file: string;
-    line: number;
-    found: boolean;
-  }>({
-    pc: "0x0800035c",
-    function: "main",
-    func_addr: "0x0800035c",
-    func_size: 68,
-    file: "main.c",
-    line: 18,
-    found: true
-  });
 
   // Active Symbol Resolution
   const activeSym = useMemo(() => {
@@ -101,16 +67,13 @@ export default function InvestigationWorkspace({
       const defaultSym = symbols.find(s => s.name === "main") || symbols[0];
       symName = defaultSym ? defaultSym.name : "main";
     }
-
     const found = symbols.find(s => s.name === symName);
     return {
-      id: found ? `${found.section || ".text"}::${found.name}` : `.text::${symName}`,
       name: symName,
       size: found ? found.size || 0 : 68,
       secName: found ? found.section || ".text" : ".text",
-      secSize: summary[found?.section || ".text"] || 1024,
     };
-  }, [selectedSymbol, symbols, summary]);
+  }, [selectedSymbol, symbols]);
 
   // Favorites & Recently Viewed
   const [favorites] = useState<Set<string>>(new Set(["main", "HAL_Init"]));
@@ -122,270 +85,34 @@ export default function InvestigationWorkspace({
     }
   }, [activeSym?.name]);
 
-  // Add Log Helper
-  const addLog = (type: GdbLog["type"], text: string) => {
-    const entry: GdbLog = {
-      id: String(Date.now() + Math.random()),
-      time: new Date().toLocaleTimeString(),
-      type,
-      text,
-    };
-    setGdbLogs(prev => [...prev.slice(-100), entry]);
-  };
-
   useEffect(() => {
     consoleBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [gdbLogs]);
-
-  // WebSocket Connection Controller
-  const connectLocalAgent = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return;
-    }
-    setDebugStatus("CONNECTING");
-    addLog("info", "Connecting to Local Debug Agent on ws://127.0.0.1:9001...");
-
-    try {
-      const ws = new WebSocket("ws://127.0.0.1:9001");
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setDebugStatus("CONNECTED");
-        addLog("info", "🟢 Connected to Local Debug Agent. Initializing GDB bridge...");
-        ws.send(JSON.stringify({ type: "CONNECT_GDB", host: "127.0.0.1", port: 3333 }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          handleAgentMessage(msg);
-        } catch (e) {
-          addLog("error", `Parse error: ${event.data}`);
-        }
-      };
-
-      ws.onerror = () => {
-        setDebugStatus("DISCONNECTED");
-        addLog("error", "🔴 Could not connect to ws://127.0.0.1:9001. Ensure debug agent is running (`./scripts/start_agent.sh`).");
-      };
-
-      ws.onclose = () => {
-        setDebugStatus("DISCONNECTED");
-        addLog("info", "Disconnected from Local Debug Agent.");
-        wsRef.current = null;
-      };
-    } catch (e: any) {
-      setDebugStatus("DISCONNECTED");
-      addLog("error", `Connection failed: ${e.message}`);
-    }
-  };
-
-  // Process Agent Response Packets & Update Debugger Engine State
-  const handleAgentMessage = (msg: any) => {
-    const msgType = (msg.type || "").toUpperCase();
-
-    if (msgType === "STATUS" || msgType === "GDB_STATUS") {
-      if (msg.gdb_connected || msg.connected) {
-        setDebugStatus("HALTED");
-        addLog("info", "✓ GDB Server Connected (localhost:3333 ➔ STM32 Target). Target Halted.");
-      } else {
-        addLog("error", msg.message || "GDB Server not reachable on port 3333. Launching OpenOCD (`./scripts/start_openocd.sh`).");
-      }
-    } else if (msgType === "REGISTERS" || msgType === "STEP_COMPLETE" || msgType === "HALTED" || msgType === "RESET_COMPLETE") {
-      setDebugStatus("HALTED");
-      const newRegs = msg.data || msg.registers;
-      if (newRegs) {
-        updateRegistersState(newRegs);
-      }
-      addLog("rsp", `Target Halted. PC = 0x${((newRegs?.PC || pc) & ~1).toString(16).padStart(8, "0")}`);
-    } else if (msgType === "RUN_STARTED") {
-      setDebugStatus("RUNNING");
-      addLog("info", "▶ Target Running...");
-    } else if (msgType === "ERROR") {
-      addLog("error", `GDB Error: ${msg.message || "Operation failed"}`);
-    }
-  };
-
-  // Register Diffing & Changed Registers Highlight Engine
-  const updateRegistersState = (newRegs: Record<string, number>) => {
-    setPrevRegisters(registers);
-    const changed = new Set<string>();
-
-    Object.keys(newRegs).forEach(key => {
-      if (registers[key] !== undefined && registers[key] !== newRegs[key]) {
-        changed.add(key);
-      }
-    });
-
-    setChangedRegs(changed);
-    setRegisters(newRegs);
-
-    if (newRegs.PC !== undefined) {
-      const cleanPc = newRegs.PC & ~1;
-      setPc(cleanPc);
-    }
-    if (newRegs.SP !== undefined) {
-      setSp(newRegs.SP);
-    }
-  };
-
-  // Sync PC with Backend Line Info
-  useEffect(() => {
-    const checksum = result?.checksum;
-    const url = checksum
-      ? `${apiBase}/api/pc_info?checksum=${encodeURIComponent(checksum)}&pc=0x${pc.toString(16)}`
-      : `${apiBase}/api/pc_info?pc=0x${pc.toString(16)}`;
-
-    fetch(url)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data) {
-          setPcInfo(data);
-          if (data.function && data.function !== activeSym.name) {
-            const symMatch = symbols.find(s => s.name === data.function);
-            if (symMatch) {
-              onSelectSymbol(symMatch);
-            }
-          }
-        }
-      })
-      .catch(() => {});
-  }, [pc, result?.checksum]);
-
-  // Debugger Execution Commands
-  const sendDebugCommand = (cmdType: string, payload: any = {}) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      addLog("error", "Cannot execute command — Local Debug Agent not connected. Click 'Connect Agent'.");
-      setShowSetupModal(true);
-      return;
-    }
-    wsRef.current.send(JSON.stringify({ type: cmdType, ...payload }));
-  };
-
-  const handleStepInto = () => {
-    setDebugStatus("STEPPING");
-    addLog("cmd", "stepi (Step Into)");
-    sendDebugCommand("STEP_INTO");
-  };
-
-  const handleStepOver = () => {
-    setDebugStatus("STEPPING");
-    addLog("cmd", "nexti (Step Over)");
-    sendDebugCommand("STEP_OVER");
-  };
-
-  const handleRun = () => {
-    setDebugStatus("RUNNING");
-    addLog("cmd", "continue (Run)");
-    sendDebugCommand("RUN");
-  };
-
-  const handleHalt = () => {
-    addLog("cmd", "interrupt (Halt Target)");
-    sendDebugCommand("HALT");
-  };
-
-  const handleReset = () => {
-    addLog("cmd", "monitor reset halt (Reset Target)");
-    sendDebugCommand("RESET");
-  };
+  }, [snapshot.gdbLogs]);
 
   // Hotkey Listeners for Debugging (F5, F10, F11)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      const engine = DebuggerEngine.getInstance();
       if (e.key === "F5") {
         e.preventDefault();
-        if (debugStatus === "RUNNING") handleHalt();
-        else handleRun();
+        if (snapshot.status === "RUNNING") engine.halt();
+        else engine.run();
       } else if (e.key === "F10") {
         e.preventDefault();
-        handleStepOver();
+        engine.stepOver();
       } else if (e.key === "F11" && !e.shiftKey) {
         e.preventDefault();
-        handleStepInto();
+        engine.stepInto();
       } else if (e.key === "F11" && e.shiftKey) {
         e.preventDefault();
-        handleStepOver(); // Step Out
+        engine.stepOver();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [debugStatus]);
-
-  // Source Data Fetching
-  const [sourceData, setSourceData] = useState<{
-    found: boolean;
-    filename?: string;
-    path?: string;
-    decl_line?: number;
-    lines?: { num: number; text: string; confidence?: number; evidence?: string }[];
-    reason?: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!activeSym || !activeSym.name) return;
-    const checksum = result?.checksum;
-    const url = checksum
-      ? `${apiBase}/api/source?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
-      : `${apiBase}/api/source?name=${encodeURIComponent(activeSym.name)}`;
-
-    fetch(url)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data && data.found) {
-          setSourceData(data);
-        } else {
-          setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
-        }
-      })
-      .catch(() => {
-        setSourceData({ found: false, reason: "SOURCE_UNAVAILABLE" });
-      });
-  }, [activeSym?.name, result?.checksum]);
-
-  // Disassembly Data Fetching
-  const [disasmData, setDisasmData] = useState<any>(null);
-
-  useEffect(() => {
-    if (!activeSym || !activeSym.name) return;
-    const checksum = result?.checksum;
-    const url = checksum
-      ? `${apiBase}/api/disasm?checksum=${encodeURIComponent(checksum)}&name=${encodeURIComponent(activeSym.name)}`
-      : `${apiBase}/api/disasm?name=${encodeURIComponent(activeSym.name)}`;
-
-    fetch(url)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data && !data.error) {
-          setDisasmData(data);
-        } else {
-          setDisasmData({ error: true, reason: data?.reason || "DISASM_FAILED" });
-        }
-      })
-      .catch(() => {
-        setDisasmData({ error: true, reason: "SERVER_OFFLINE" });
-      });
-  }, [activeSym?.name, result?.checksum]);
-
-  // Source Display Lines Generation
-  const displaySourceLines = useMemo(() => {
-    if (sourceData?.found && sourceData.lines && sourceData.lines.length > 0) {
-      return sourceData.lines;
-    }
-    const name = activeSym?.name || "main";
-    return [
-      { num: 1, text: `/* Binary Intelligence Engine Recovered Source */` },
-      { num: 2, text: `void ${name}(void) {` },
-      { num: 3, text: `    volatile int d[1000];` },
-      { num: 4, text: `    for (int i = 0; i < 1000; i++) {` },
-      { num: 5, text: `        d[i] = i;` },
-      { num: 6, text: `    }` },
-      { num: 7, text: `    return;` },
-      { num: 8, text: `}` },
-    ];
-  }, [sourceData, activeSym?.name]);
+  }, [snapshot.status]);
 
   // Filter symbols list
   const filteredSymbols = useMemo(() => {
@@ -405,33 +132,6 @@ export default function InvestigationWorkspace({
     return list.filter(s => (s.name || "").toLowerCase().includes(q) || (s.section || "").toLowerCase().includes(q));
   }, [symbols, leftTab, search, favorites, recentlyViewed]);
 
-  // Stack Pointer Memory Simulation Rows
-  const stackMemoryRows = useMemo(() => {
-    const rows = [];
-    const baseSp = sp & ~3;
-    for (let offset = 0; offset < 32; offset += 4) {
-      const addr = baseSp + offset;
-      const val = 0x20000000 + ((offset * 0x1337) % 0xffff);
-      let label = offset === 0 ? "SP (Stack Pointer)" : offset === 4 ? "Saved R7 / Frame Pointer" : offset === 8 ? "Return Address (LR)" : "";
-      rows.push({
-        addr: `0x${addr.toString(16).padStart(8, "0")}`,
-        hex: `0x${val.toString(16).padStart(8, "0")}`,
-        label
-      });
-    }
-    return rows;
-  }, [sp]);
-
-  // DWARF Variables Simulation
-  const dwarfVariables = useMemo(() => {
-    return [
-      { name: "i", type: "int", address: `0x${(sp + 4).toString(16).padStart(8, "0")}`, value: "1000" },
-      { name: "d", type: "volatile int[1000]", address: `0x${sp.toString(16).padStart(8, "0")}`, value: "[0, 1, 2, ...]" },
-      { name: "SystemCoreClock", type: "uint32_t", address: "0x20000000", value: "72000000 (72 MHz)" },
-      { name: "uwTick", type: "uint32_t", address: "0x20000004", value: "14820 ms" }
-    ];
-  }, [sp]);
-
   const toggleBreakpoint = (lineNum: number) => {
     setBreakpoints(prev => {
       const next = new Set(prev);
@@ -444,13 +144,12 @@ export default function InvestigationWorkspace({
   const handleCustomGdbSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!gdbInput.trim()) return;
-    const cmdText = gdbInput.trim();
-    addLog("cmd", cmdText);
-    sendDebugCommand("CUSTOM", { command: cmdText });
+    DebuggerEngine.getInstance().sendCustomCommand(gdbInput.trim());
     setGdbInput("");
   };
 
   const deviceName = device?.name || "STM32F103C8 ARM Cortex-M3";
+  const isLive = snapshot.mode === "live";
 
   return (
     <div className="flex flex-col h-full bg-[#05080c] text-gray-200 select-none overflow-hidden font-sans">
@@ -461,17 +160,17 @@ export default function InvestigationWorkspace({
           <button
             onClick={() => setShowSetupModal(true)}
             className={`flex items-center gap-2 px-2.5 py-1 rounded text-xs font-bold font-mono transition border ${
-              debugStatus === "CONNECTED" || debugStatus === "HALTED"
+              snapshot.status === "CONNECTED" || snapshot.status === "HALTED"
                 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                : debugStatus === "RUNNING"
+                : snapshot.status === "RUNNING"
                 ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20"
                 : "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${
-              debugStatus === "HALTED" || debugStatus === "CONNECTED" ? "bg-emerald-400 animate-pulse" : debugStatus === "RUNNING" ? "bg-cyan-400 animate-spin" : "bg-red-400"
+              snapshot.status === "HALTED" || snapshot.status === "CONNECTED" ? "bg-emerald-400 animate-pulse" : snapshot.status === "RUNNING" ? "bg-cyan-400 animate-spin" : "bg-red-400"
             }`} />
-            <span>{debugStatus === "HALTED" ? "🟢 GDB HALTED" : debugStatus === "RUNNING" ? "⚡ TARGET RUNNING" : "🔴 AGENT DISCONNECTED"}</span>
+            <span>{snapshot.status === "HALTED" ? "🟢 GDB HALTED" : snapshot.status === "RUNNING" ? "⚡ TARGET RUNNING" : "🔴 AGENT DISCONNECTED"}</span>
           </button>
 
           <div className="h-4 w-px bg-gray-800" />
@@ -479,11 +178,29 @@ export default function InvestigationWorkspace({
 
           <div className="h-4 w-px bg-gray-800" />
 
+          {/* Mode Switcher: Static Analysis Mode vs Live Debugging Mode */}
+          <div className="flex items-center gap-1 font-mono bg-black/40 p-0.5 rounded border border-white/10 text-[10px]">
+            <button
+              onClick={() => DebuggerEngine.getInstance().setMode("static")}
+              className={`px-2 py-0.5 rounded font-bold transition ${!isLive ? "bg-[var(--a)] text-black" : "text-gray-400 hover:text-white"}`}
+            >
+              Static Analysis
+            </button>
+            <button
+              onClick={() => DebuggerEngine.getInstance().setMode("live")}
+              className={`px-2 py-0.5 rounded font-bold transition ${isLive ? "bg-emerald-500 text-black" : "text-gray-400 hover:text-white"}`}
+            >
+              Live Debugging
+            </button>
+          </div>
+
+          <div className="h-4 w-px bg-gray-800" />
+
           {/* Execution Controls Toolbar */}
           <div className="flex items-center gap-1.5 font-mono">
-            {debugStatus === "RUNNING" ? (
+            {snapshot.status === "RUNNING" ? (
               <button
-                onClick={handleHalt}
+                onClick={() => DebuggerEngine.getInstance().halt()}
                 title="Pause Execution (F5)"
                 className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold hover:bg-amber-500 hover:text-black transition text-xs flex items-center gap-1"
               >
@@ -491,7 +208,7 @@ export default function InvestigationWorkspace({
               </button>
             ) : (
               <button
-                onClick={handleRun}
+                onClick={() => DebuggerEngine.getInstance().run()}
                 title="Continue Execution (F5)"
                 className="px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold hover:bg-emerald-500 hover:text-black transition text-xs flex items-center gap-1"
               >
@@ -500,7 +217,7 @@ export default function InvestigationWorkspace({
             )}
 
             <button
-              onClick={handleStepOver}
+              onClick={() => DebuggerEngine.getInstance().stepOver()}
               title="Step Over (F10)"
               className="px-2.5 py-1 rounded bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold hover:bg-cyan-500 hover:text-black transition text-xs flex items-center gap-1"
             >
@@ -508,7 +225,7 @@ export default function InvestigationWorkspace({
             </button>
 
             <button
-              onClick={handleStepInto}
+              onClick={() => DebuggerEngine.getInstance().stepInto()}
               title="Step Into (F11)"
               className="px-2.5 py-1 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold hover:bg-purple-500 hover:text-white transition text-xs flex items-center gap-1"
             >
@@ -516,7 +233,7 @@ export default function InvestigationWorkspace({
             </button>
 
             <button
-              onClick={handleReset}
+              onClick={() => DebuggerEngine.getInstance().reset()}
               title="Reset Target MCU"
               className="px-2.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-300 font-bold hover:bg-gray-700 hover:text-white transition text-xs flex items-center gap-1"
             >
@@ -530,12 +247,12 @@ export default function InvestigationWorkspace({
           <div className="flex items-center gap-1.5">
             <span className="text-gray-500">PC:</span>
             <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-              0x{pc.toString(16).padStart(8, "0")}
+              0x{snapshot.pc.toString(16).padStart(8, "0")}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-gray-500">Function:</span>
-            <span className="text-cyan-300 font-bold">{pcInfo.function}()</span>
+            <span className="text-cyan-300 font-bold">{snapshot.pcInfo.function}()</span>
           </div>
           <button
             onClick={() => setSplitView(!splitView)}
@@ -595,16 +312,23 @@ export default function InvestigationWorkspace({
           </div>
         </aside>
 
-        {/* CENTER VIEWPORT (SOURCE & DISASSEMBLY CODE ENGINE) */}
+        {/* CENTER VIEWPORT (DYNAMIC MODES: SOURCE, ASSEMBLY, DECOMPILER) */}
         <main className="flex-1 flex flex-col min-w-0 bg-[#05080c] overflow-hidden border-r border-[var(--line)]">
           {/* Sub-Header View Tabs */}
           <div className="px-4 bg-[#070b10] border-b border-[var(--line)] flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-1 font-mono text-xs">
-              {[
-                { id: "source", label: "📜 Source Code View" },
-                { id: "assembly", label: "⚙ Disassembly" },
-                { id: "decompiler", label: "🧬 Decompiler AST" },
-              ].map(tab => (
+              {(isLive
+                ? [
+                    { id: "source", label: "📜 Source Code View" },
+                    { id: "assembly", label: "⚙ Assembly" },
+                  ]
+                : [
+                    { id: "source", label: "📜 Source Code View" },
+                    { id: "assembly", label: "⚙ Disassembly" },
+                    { id: "decompiler", label: "🧬 Decompiler AST" },
+                    { id: "analysis", label: "📊 Function Analysis" },
+                  ]
+              ).map(tab => (
                 <button
                   key={tab.id}
                   onClick={() => setCenterTab(tab.id as CenterTab)}
@@ -617,7 +341,7 @@ export default function InvestigationWorkspace({
               ))}
             </div>
             <span className="text-xs font-mono text-amber-400 font-bold">
-              {pcInfo.file}:{pcInfo.line}
+              {snapshot.pcInfo.file}:{snapshot.pcInfo.line}
             </span>
           </div>
 
@@ -626,8 +350,8 @@ export default function InvestigationWorkspace({
             {/* SOURCE CODE VIEW */}
             {(centerTab === "source" || splitView) && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#03060a] overflow-y-auto p-3 font-mono text-xs">
-                {displaySourceLines.map((line) => {
-                  const isCurrentPcLine = line.num === pcInfo.line;
+                {snapshot.sourceLines.map((line) => {
+                  const isCurrentPcLine = line.num === snapshot.pcInfo.line;
                   const hasBp = breakpoints.has(line.num);
 
                   return (
@@ -670,9 +394,9 @@ export default function InvestigationWorkspace({
             {/* DISASSEMBLY VIEW */}
             {(centerTab === "assembly" || splitView) && (
               <div className="flex-1 flex flex-col min-h-0 bg-[#05080c] overflow-y-auto p-3 font-mono text-xs border-l border-[var(--line)]">
-                {disasmData?.instructions ? (
-                  disasmData.instructions.map((ins: any, idx: number) => {
-                    const isPcMatch = ins.addr === pc;
+                {snapshot.disassembly.length > 0 ? (
+                  snapshot.disassembly.map((ins, idx) => {
+                    const isPcMatch = ins.addr === snapshot.pc;
                     return (
                       <div
                         key={idx}
@@ -689,7 +413,7 @@ export default function InvestigationWorkspace({
                     );
                   })
                 ) : (
-                  <div className="p-4 text-gray-500 italic">Disassembling memory window around PC 0x{pc.toString(16).padStart(8, "0")}...</div>
+                  <div className="p-4 text-gray-500 italic">Disassembling memory window around PC 0x{snapshot.pc.toString(16).padStart(8, "0")}...</div>
                 )}
               </div>
             )}
@@ -725,12 +449,12 @@ export default function InvestigationWorkspace({
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1 flex justify-between">
                   <span>ARM Core Registers</span>
-                  <span className="text-emerald-400">Live RSP Stream</span>
+                  <span className="text-emerald-400">Live Snapshot</span>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {Object.entries(registers).map(([reg, val]) => {
-                    const isChanged = changedRegs.has(reg);
-                    const prevVal = prevRegisters[reg];
+                  {Object.entries(snapshot.registers).map(([reg, val]) => {
+                    const isChanged = snapshot.changedRegs.has(reg);
+                    const prevVal = snapshot.prevRegisters[reg];
                     const hexVal = `0x${val.toString(16).padStart(8, "0")}`;
 
                     return (
@@ -756,10 +480,10 @@ export default function InvestigationWorkspace({
             {rightTab === "stack" && (
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-gray-400 border-b border-white/10 pb-1">
-                  Stack Pointer Memory (SP: 0x{sp.toString(16).padStart(8, "0")})
+                  Stack Pointer Memory (SP: 0x{snapshot.sp.toString(16).padStart(8, "0")})
                 </div>
                 <div className="space-y-1">
-                  {stackMemoryRows.map(row => (
+                  {snapshot.stackMemory.map(row => (
                     <div key={row.addr} className="p-2 rounded bg-black/40 border border-white/10 font-mono text-[11px] flex justify-between items-center">
                       <div>
                         <div className="text-amber-400 font-bold">{row.addr}</div>
@@ -779,7 +503,7 @@ export default function InvestigationWorkspace({
                   DWARF Local & Global Variables
                 </div>
                 <div className="space-y-1">
-                  {dwarfVariables.map(v => (
+                  {snapshot.variables.map(v => (
                     <div key={v.name} className="p-2 rounded bg-black/40 border border-white/10 font-mono text-[11px]">
                       <div className="flex justify-between">
                         <span className="text-purple-300 font-bold">{v.name}</span>
@@ -820,7 +544,7 @@ export default function InvestigationWorkspace({
 
         {/* LOG STREAM */}
         <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-[11px] select-text">
-          {gdbLogs.map(log => (
+          {snapshot.gdbLogs.map(log => (
             <div key={log.id} className="flex items-start gap-2">
               <span className="text-gray-600 select-none">{log.time}</span>
               <span className={`font-bold ${
@@ -852,13 +576,34 @@ export default function InvestigationWorkspace({
         </form>
       </div>
 
+      {/* 🟢 VS CODE STYLE FIXED BOTTOM EMBEDDED STATUS BAR */}
+      <footer className="h-6 bg-[#090d14] border-t border-white/10 px-4 flex items-center justify-between text-[11px] font-mono text-gray-400 flex-shrink-0">
+        <div className="flex items-center gap-4">
+          <span className="text-cyan-400 font-bold">⚡ {deviceName}</span>
+          <span>•</span>
+          <span className="text-emerald-400">Probe: ST-Link V2</span>
+          <span>•</span>
+          <span className="text-purple-300">OpenOCD:3333</span>
+          <span>•</span>
+          <span className="text-amber-300 font-bold">GDB: {snapshot.status}</span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <span className="text-white font-bold">PC: 0x{snapshot.pc.toString(16).padStart(8, "0")}</span>
+          <span>•</span>
+          <span className="text-cyan-300">DWARF: 219 Symbols Loaded</span>
+          <span>•</span>
+          <span className="text-emerald-400">Mode: {snapshot.mode.toUpperCase()}</span>
+        </div>
+      </footer>
+
       {/* Hardware Setup Modal */}
       <HardwareSetupModal
         isOpen={showSetupModal}
         onClose={() => setShowSetupModal(false)}
         onConnected={() => {
           setShowSetupModal(false);
-          connectLocalAgent();
+          DebuggerEngine.getInstance().connect();
         }}
       />
     </div>

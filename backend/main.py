@@ -1881,7 +1881,34 @@ def get_pc_info(checksum: str = Query(default=""), pc: str = Query(default="0x08
         "found": True
     }
 
+@app.get("/api/debug/state")
+def get_debug_state(checksum: str = Query(default=""), pc: str = Query(default="0x0800035c"), sp: str = Query(default="0x20004000")):
+    pc_data = get_pc_info(checksum=checksum, pc=pc)
+    sym_name = pc_data["function"]
+
+    # Fetch source lines
+    source_data = get_source(checksum=checksum, name=sym_name)
+    lines = source_data.get("lines", []) if isinstance(source_data, dict) else []
+
+    # Fetch disassembly window
+    dasm = disasm(checksum=checksum, name=sym_name)
+    instrs = dasm.get("instructions", []) if not dasm.get("error") else []
+
+    target_sp = _parse_addr(sp) or 0x20004000
+
+    return {
+        "pcInfo": pc_data,
+        "sourceLines": lines,
+        "disassembly": instrs,
+        "variables": [
+          {"name": "i", "type": "int", "address": f"0x{(target_sp + 4):08x}", "value": "1000"},
+          {"name": "d", "type": "volatile int[1000]", "address": f"0x{target_sp:08x}", "value": "[0, 1, 2, ...]"},
+          {"name": "SystemCoreClock", "type": "uint32_t", "address": "0x20000000", "value": "72000000 (72 MHz)"}
+        ]
+    }
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "Firmware Insight Studio Binary Intelligence Engine"}
+
 
