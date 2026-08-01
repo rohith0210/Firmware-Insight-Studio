@@ -777,18 +777,71 @@ def parse_elf(path: str) -> dict:
         if children:
             treemap_data.append({"name": sec_name, "size": sec_total, "children": children})
 
-    # Call graph
-    text_funcs = [s for s in symbols if s['section'] == '.text' and s['type'] == 'STT_FUNC']
+    # Multi-Architecture Real Call Graph Extraction Engine
+    text_funcs = [s for s in symbols if s.get('section') == '.text' and s.get('type') == 'STT_FUNC' and s.get('size', 0) > 0]
+    if not text_funcs:
+        text_funcs = [s for s in symbols if s.get('type') == 'STT_FUNC']
+
     root = next((s for s in text_funcs if s['name'] == 'main'), None) or (text_funcs[0] if text_funcs else None)
-    nodes, edges = [], []
-    if root:
-        nodes.append({"id": root['name'], "label": root['name'], "type": "entry"})
-        n = 0
-        for fn in text_funcs:
-            if fn['name'] != root['name'] and n < 8:
-                nodes.append({"id": fn['name'], "label": fn['name'], "type": "function"})
-                edges.append({"source": root['name'], "target": fn['name'], "animated": True})
-                n += 1
+
+    nodes_map: Dict[str, dict] = {}
+    edges_set: Set[Tuple[str, str]] = set()
+
+    for fn in text_funcs[:120]:
+        n_type = "entry" if (root and fn['name'] == root['name']) else "function"
+        nodes_map[fn['name']] = {"id": fn['name'], "label": fn['name'], "type": n_type}
+
+    CALL_MNEMONICS = {
+        "bl", "blx", "b", "bx", "cbz", "cbnz",
+        "jal", "jalr", "call", "tail", "bnez", "beqz", "bge", "blt", "bgt", "ble",
+        "call0", "call4", "call8", "call12", "callx0", "callx4", "callx8", "callx12",
+        "jmp", "callq", "jmpq", "blr", "br", "bal", "j"
+    }
+
+    sym_by_addr = { (s['value'] & ~1): s['name'] for s in symbols if s.get('value') is not None }
+
+    for fn in text_funcs[:40]:
+        src_name = fn['name']
+        val = fn['value'] & ~1
+        sz = fn.get('size', 64)
+        if sz <= 0: sz = 64
+        
+        ca, cfg = _arch_map(em)
+        if ca is not None:
+            try:
+                import capstone as cs
+                thumb = bool(cfg.get("thumb", True)) if cfg else True
+                mode = cs.CS_MODE_THUMB if thumb else (cfg.get("mode", 0) if cfg else 0)
+                try: md = cs.Cs(ca, mode)
+                except Exception: md = cs.Cs(ca, 0)
+                md.detail = False
+
+                off = _va2off({"va2off": va2off}, val)
+                if off is not None and off + sz <= len(raw):
+                    chunk = raw[off:off + sz]
+                    for ins in md.disasm(chunk, val):
+                        mn = ins.mnemonic.lower().split(".")[0]
+                        op = ins.op_str.strip()
+                        if mn in CALL_MNEMONICS:
+                            target_sym = _resolve_symbol_name({"sym_by_name": {s["name"]: s for s in symbols}}, op)
+                            if not target_sym:
+                                target_addr = _parse_addr(op)
+                                if target_addr is not None:
+                                    target_sym = sym_by_addr.get(target_addr & ~1)
+                            if target_sym and target_sym in nodes_map and target_sym != src_name:
+                                edges_set.add((src_name, target_sym))
+            except Exception:
+                pass
+
+    # Relocation fallback for sparse symbols
+    for rel in relocations[:80]:
+        sym_name = rel.get("symbol")
+        if sym_name in nodes_map and root and root['name'] in nodes_map and sym_name != root['name']:
+            edges_set.add((root['name'], sym_name))
+
+    nodes = list(nodes_map.values())
+    edges = [{"source": src, "target": tgt, "animated": True} for src, tgt in edges_set]
+
     referenced |= {nd['id'] for nd in nodes} | ({root['name']} if root else set())
 
     # Dead code
