@@ -9,10 +9,10 @@ import SymbolExplorer from "./components/SymbolExplorer";
 import CallGraph from "./components/CallGraph";
 import DeadCode from "./components/DeadCode";
 import Compare from "./components/Compare";
+import Disassembler from "./components/Disassembler";
 import ObjectFiles from "./components/ObjectFiles";
 import SourceViewer from "./components/SourceViewer";
 import InvestigationWorkspace from "./components/InvestigationWorkspace";
-import ExecutionWorkspaceRoadmap from "./components/ExecutionWorkspaceRoadmap";
 import IsrAnalyzer from "./components/IsrAnalyzer";
 import Peripherals from "./components/Peripherals";
 import Optimize from "./components/Optimize";
@@ -125,7 +125,7 @@ export default function App() {
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
   const [accent, setAccent] = useState<"signal" | "phosphor">("signal");
   const [deviceOverride, setDeviceOverride] = useState<string>("");
-  const [_disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
+  const [disasmTarget, setDisasmTarget] = useState<{ name: string; nonce: number } | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<any | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [, setCallGraphTarget] = useState<{ symbol: string; mode: "callers" | "callees" | "symbol" } | null>(null);
@@ -295,7 +295,7 @@ export default function App() {
           <Locked name="Call Graph" note="No function symbols resolved in this binary." />
         );
       case "debug":
-        return <ExecutionWorkspaceRoadmap result={result} device={device!} onNavigate={(v) => setView(v as View)} />;
+        return <Disassembler result={result} target={disasmTarget} />;
       case "isr":
         return <IsrAnalyzer result={result} />;
       case "periph":
