@@ -299,7 +299,7 @@ Distributed under the **MIT License**. See `LICENSE` for details.
 <br/>
 
 <p align="center">
-  <strong>Firmware Insight Studio</strong> · built with 🟩🟨🟥 by <a href="https://github.com/rohith0210"><strong>rohith0210</strong></a>
+  <strong>Firmware Insight Studio v2.0</strong> · engineered with 🩵⚡⚙️ by <a href="https://github.com/rohith0210"><strong>rohith0210</strong></a>
   <br/><br/>
   <em>If Firmware Insight Studio saved you hours of debugging or freed up Flash/RAM for you, a ⭐ goes a long way.</em>
 </p>
