@@ -609,8 +609,8 @@ export default function Disassembler({
             ) : dis && dis.instructions && dis.instructions.length > 0 ? (
               <div className="space-y-1 font-mono select-text">
                 {dis.instructions.map(ins => {
-                  const isCurrentPc = pc === ins.addr;
-                  const isBp = bps.has(ins.addr);
+                  const isCurrentPc = pc !== null && ((pc & ~1) === (ins.addr & ~1));
+                  const isBp = bps.has(ins.addr) || bps.has(ins.addr & ~1);
                   return (
                     <div
                       key={ins.addr}
@@ -620,7 +620,7 @@ export default function Disassembler({
                         pcRef.current = ins.addr;
                       }}
                       className={`flex items-center gap-3 px-2.5 py-1 rounded transition ${isCurrentPc
-                          ? "bg-[rgba(51,214,194,0.35)] border-l-4 border-[var(--a)] font-bold text-white shadow-lg shadow-[var(--a)]/20"
+                          ? "bg-emerald-500/25 border-l-4 border-emerald-400 font-bold text-white shadow-lg shadow-emerald-500/20 ring-1 ring-emerald-400/40"
                           : "hover:bg-white/5 text-gray-300"
                         }`}
                     >
@@ -639,8 +639,8 @@ export default function Disassembler({
                       </button>
 
                       {/* PC Indicator */}
-                      <span className="w-4 text-center font-bold text-[var(--a)]">
-                        {isCurrentPc ? "➔" : ""}
+                      <span className="w-5 text-center font-bold text-emerald-400 flex items-center justify-center">
+                        {isCurrentPc ? <span className="animate-pulse">➔</span> : ""}
                       </span>
 
                       {/* Address */}
