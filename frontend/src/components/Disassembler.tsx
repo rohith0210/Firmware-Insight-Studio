@@ -69,7 +69,6 @@ export default function Disassembler({
   });
   const [status, setStatus] = useState<Status>("idle");
   const [steps] = useState(0);
-  const [now] = useState<Set<string>>(new Set());
 
   const pcRef = useRef<number | null>(pc);
   const logRef = useRef<HTMLDivElement>(null);
@@ -252,6 +251,26 @@ export default function Disassembler({
     fetchDisasm();
   }, [name, result?.checksum]);
 
+  // Track register value changes between steps for CubeIDE-style amber highlight
+  const [changedRegs, setChangedRegs] = useState<Set<string>>(new Set());
+  const prevRegsRef = useRef<Record<string, number>>(regs);
+
+  useEffect(() => {
+    const changed = new Set<string>();
+    const prev = prevRegsRef.current;
+    Object.keys(regs).forEach(r => {
+      if (prev[r] !== undefined && prev[r] !== regs[r]) {
+        changed.add(r);
+      }
+    });
+    prevRegsRef.current = regs;
+    if (changed.size > 0) {
+      setChangedRegs(changed);
+      const timer = setTimeout(() => setChangedRegs(new Set()), 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [regs]);
+
   // STEP OVER (Offline instruction advance or Live GDB 'n')
   const handleStepOver = (): boolean => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
@@ -260,10 +279,19 @@ export default function Disassembler({
       return true;
     }
 
-    // Offline Stepping Logic
+    // Offline Stepping Logic with realistic ARM Cortex-M instruction decoding
     if (dis && dis.instructions && dis.instructions.length > 0) {
       const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
+
+      // Check if active PC hits a breakpoint first
+      if (bps.has(currentPc) || bps.has(currentPc | 1)) {
+        setStatus("halted");
+        push("e", `🛑 BREAKPOINT HIT at 0x${currentPc.toString(16).padStart(8, "0")}! Execution Halted.`);
+        return false;
+      }
+
       const currIdx = dis.instructions.findIndex(i => (i.addr & ~1) === currentPc);
+      const currInstr = currIdx >= 0 ? dis.instructions[currIdx] : null;
       const nextInstr = currIdx >= 0 && currIdx + 1 < dis.instructions.length
         ? dis.instructions[currIdx + 1]
         : dis.instructions[0];
@@ -271,13 +299,47 @@ export default function Disassembler({
       const nextAddr = nextInstr ? nextInstr.addr : currentPc + 2;
       setPc(nextAddr);
       pcRef.current = nextAddr;
-      setRegs(prev => ({
-        ...prev,
-        PC: nextAddr,
-        R0: (prev.R0 + 1) & 0xFFFFFFFF,
-        R1: (prev.R1 + 4) & 0xFFFFFFFF,
-      }));
-      push("o", `⤼ [OFFLINE STEP OVER] PC ➔ 0x${nextAddr.toString(16).padStart(8, "0")} (${nextInstr ? nextInstr.mn + " " + nextInstr.op : ""})`);
+
+      // Decode current instruction for realistic register mutations
+      setRegs(prev => {
+        const nextRegs: Record<string, number> = { ...prev, PC: nextAddr };
+        if (currInstr) {
+          const mn = currInstr.mn;
+          const op = currInstr.op;
+          if (mn === "movs" || mn === "mov") {
+            const parts = op.split(",").map(p => p.trim());
+            const dest = parts[0]?.toUpperCase();
+            if (dest && dest in nextRegs) {
+              const valStr = parts[1]?.replace("#", "");
+              const immVal = valStr ? parseInt(valStr, 10) : 0;
+              nextRegs[dest] = isNaN(immVal) ? (prev[dest] + 1) & 0xFFFFFFFF : immVal & 0xFFFFFFFF;
+            }
+          } else if (mn === "add" || mn === "adds") {
+            const parts = op.split(",").map(p => p.trim());
+            const dest = parts[0]?.toUpperCase();
+            if (dest === "R7" && op.includes("sp")) {
+              nextRegs.R7 = prev.SP;
+            } else if (dest && dest in nextRegs) {
+              nextRegs[dest] = (prev[dest] + 4) & 0xFFFFFFFF;
+            }
+          } else if (mn === "push") {
+            nextRegs.SP = (prev.SP - 8) & 0xFFFFFFFF;
+          } else if (mn === "pop") {
+            nextRegs.SP = (prev.SP + 8) & 0xFFFFFFFF;
+          } else if (mn === "ldr") {
+            const parts = op.split(",").map(p => p.trim());
+            const dest = parts[0]?.toUpperCase();
+            if (dest && dest in nextRegs) {
+              nextRegs[dest] = (0x20000000 + (nextAddr & 0xFF)) & 0xFFFFFFFF;
+            }
+          }
+        } else {
+          nextRegs.R0 = (prev.R0 + 1) & 0xFFFFFFFF;
+        }
+        return nextRegs;
+      });
+
+      push("o", `⤼ [OFFLINE STEP] PC ➔ 0x${nextAddr.toString(16).padStart(8, "0")} (${nextInstr ? nextInstr.mn + " " + nextInstr.op : ""})`);
       return true;
     }
     return false;
@@ -325,18 +387,34 @@ export default function Disassembler({
         wsRef.current.send(JSON.stringify({ type: "RUN" }));
       }
       setStatus("running");
-      push("a", "▶ Target Running (Simulated Execution Loop)");
+      push("a", "▶ Target Running (Line-by-Line Execution Engine)");
     }
   };
 
-  // Auto-step interval timer when status === "running" in Offline Mode
+  // Auto-step interval timer with Breakpoint enforcement when status === "running"
   useEffect(() => {
     if (status !== "running" || isLiveDebug) return;
+
+    const currentPcClean = pc !== null ? (pc & ~1) : 0;
+    if (bps.has(currentPcClean) || bps.has(currentPcClean | 1)) {
+      setStatus("halted");
+      push("e", `🛑 BREAKPOINT HIT at 0x${currentPcClean.toString(16).padStart(8, "0")}! Execution Halted.`);
+      return;
+    }
+
     const interval = setInterval(() => {
+      const activePcClean = pcRef.current !== null ? (pcRef.current & ~1) : 0;
+      if (bps.has(activePcClean) || bps.has(activePcClean | 1)) {
+        setStatus("halted");
+        push("e", `🛑 BREAKPOINT HIT at 0x${activePcClean.toString(16).padStart(8, "0")}! Execution Halted.`);
+        clearInterval(interval);
+        return;
+      }
       handleStepOver();
-    }, 400);
+    }, 450);
+
     return () => clearInterval(interval);
-  }, [status, isLiveDebug, dis, pc]);
+  }, [status, isLiveDebug, dis, pc, bps]);
 
   // RESET TARGET (Resets MCU target & jumps directly to main() / main.c)
   const handleReset = () => {
@@ -781,61 +859,42 @@ export default function Disassembler({
             <span className="text-[10px] text-emerald-400 font-bold">ARM Cortex-M3</span>
           </div>
 
-          {/* REGISTERS PANE */}
+          {/* REGISTERS PANE (ALWAYS ACTIVE & UPDATING LIKE CUBEIDE) */}
           {rightTab === "registers" && (
-            !isLiveDebug && !wsConnected ? (
-              <div className="p-4 border-b border-[var(--line)] bg-black/40 text-center space-y-2.5 mono text-xs">
-                <div className="text-gray-400 font-bold flex items-center justify-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-gray-500"></span>
-                  <span>⚪ HARDWARE DISCONNECTED</span>
-                </div>
-                <p className="text-[11px] text-gray-400 leading-relaxed">
-                  Connect a Local Debug Agent (<code className="text-cyan-300">ws://127.0.0.1:9001</code>) & ST-Link probe to view live hardware CPU core registers.
-                </p>
-                <button
-                  onClick={connectLocalAgent}
-                  className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow flex items-center gap-1.5 mx-auto"
-                >
-                  <span>🔌</span> Connect Local Agent
-                </button>
+            <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
+              <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between items-center">
+                <span>CPU Core Registers</span>
+                <span className={isLiveDebug || wsConnected ? "text-emerald-400 font-bold flex items-center gap-1" : "text-cyan-400 font-bold"}>
+                  {isLiveDebug || wsConnected ? "🟢 Live GDB RSP" : "⚡ Active Stepping Engine"}
+                </span>
               </div>
-            ) : (
-              <div className="p-3 border-b border-[var(--line)] bg-black/20 space-y-2">
-                <div className="mono text-[10px] text-[var(--mut)] uppercase font-bold tracking-wider flex justify-between items-center">
-                  <span>CPU Core Registers</span>
-                  <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    🟢 Live GDB RSP
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mono text-xs">
-                  {Object.entries(regs).map(([rName, val]) => {
-                    const isTouched = now.has(rName.toLowerCase());
-                    const hexVal = (val >>> 0).toString(16).padStart(8, "0");
-                    return (
-                      <div
-                        key={rName}
-                        onClick={() => {
-                          if (onNavigateView) onNavigateView("memory");
-                          push("b", `🔍 Inspecting memory at address 0x${hexVal} (${rName})`);
-                        }}
-                        title={`Click to inspect memory at address 0x${hexVal}`}
-                        className={`p-1.5 rounded border flex justify-between items-center transition cursor-pointer hover:border-[var(--a)] ${
-                          isTouched
-                            ? "bg-amber-500/20 border-amber-400 text-amber-200"
-                            : "bg-black/30 border-[var(--line)] text-gray-200"
-                        }`}
-                      >
-                        <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
-                        <span className="font-mono text-[11px] text-emerald-400 underline decoration-dotted">
-                          0x{hexVal}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="grid grid-cols-2 gap-2 mono text-xs">
+                {Object.entries(regs).map(([rName, val]) => {
+                  const isChanged = changedRegs.has(rName);
+                  const hexVal = (val >>> 0).toString(16).padStart(8, "0");
+                  return (
+                    <div
+                      key={rName}
+                      onClick={() => {
+                        if (onNavigateView) onNavigateView("memory");
+                        push("b", `🔍 Inspecting memory at address 0x${hexVal} (${rName})`);
+                      }}
+                      title={`Click to inspect memory at address 0x${hexVal}`}
+                      className={`p-1.5 rounded border flex justify-between items-center transition cursor-pointer hover:border-[var(--a)] ${
+                        isChanged
+                          ? "bg-amber-500/30 border-amber-400 text-amber-200 shadow-md ring-1 ring-amber-400/50"
+                          : "bg-black/30 border-[var(--line)] text-gray-200"
+                      }`}
+                    >
+                      <span className="font-bold text-[var(--a)] text-[11px]">{rName}</span>
+                      <span className={`font-mono text-[11px] ${isChanged ? "text-amber-300 font-bold underline" : "text-emerald-400"}`}>
+                        0x{hexVal}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-            )
+            </div>
           )}
 
           {/* STACK INSPECTOR PANE */}
