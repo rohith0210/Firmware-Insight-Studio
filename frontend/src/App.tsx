@@ -19,7 +19,7 @@ import Optimize from "./components/Optimize";
 import BuildConfig from "./components/BuildConfig";
 import Timeline, { type Snap } from "./components/Timeline";
 import Fragmentation from "./components/Fragmentation";
-import Uploader from "./components/Uploader";
+import WelcomeDropZone from "./components/WelcomeDropZone";
 import Locked from "./components/Locked";
 import InspectorPanel from "./components/InspectorPanel";
 import { detectDevice, DB } from "./utils/devices";
@@ -119,7 +119,7 @@ type Toast = { id: number; message: string; type: "info" | "success" | "warning"
 export default function App() {
   const [result, setResult] = useState<ParseResult | null>(null);
   const [resultB, setResultB] = useState<ParseResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, _setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("overview");
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
@@ -160,25 +160,7 @@ export default function App() {
     setHistory(h => (h[h.length - 1]?.checksum === snap.checksum ? h : [...h, snap].slice(-40)));
   }, [result?.checksum]);
 
-  const handleUpload = async (file: File) => {
-    setLoading(true);
-    setError(null);
-    setSelectedSection(null);
-    setResultB(null);
-    setDeviceOverride("");
-    setView("overview");
-    try {
-      const parsed = await parseFile(file);
-      setResult(parsed);
-      setSelectedSymbol(null);
-      addToast("Firmware binary parsed successfully", "success");
-    } catch (e: any) {
-      setError(e.message);
-      addToast(`Parsing error: ${e.message}`, "error");
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   const handleCompare = async (file: File) => {
     setError(null);
@@ -248,7 +230,7 @@ export default function App() {
   }, [addToast]);
 
   if (!result) {
-    return <Uploader onUpload={handleUpload} loading={loading} />;
+    return <WelcomeDropZone onFileParsed={(parsed) => { setResult(parsed); setView("investigator"); }} />;
   }
 
   const renderView = () => {
@@ -359,7 +341,7 @@ export default function App() {
     <>
       <div className="app-bg" />
       <div className="shell" style={{ height: "100vh", overflow: "hidden" }}>
-        <Sidebar view={view} setView={setView} hasResult={!!result} />
+        <Sidebar view={view} setView={setView} hasResult={!!result} onResetBinary={() => setResult(null)} />
         <div className="main" style={{ overflow: "hidden" }}>
           <Ribbon title={TITLES[view] || view} result={result} loading={loading} accent={accent} device={device} override={deviceOverride} setOverride={setDeviceOverride} cycleAccent={() => setAccent(a => a === "signal" ? "phosphor" : "signal")} onJSON={exportJSON} onCSV={exportCSV} onReset={() => { setResult(null); setResultB(null); setDeviceOverride(""); setSelectedSymbol(null); }} onOpenSearch={() => setIsSearchOpen(true)} />
           <div className="flex flex-1" style={{ minHeight: 0 }}>

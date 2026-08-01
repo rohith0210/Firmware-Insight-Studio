@@ -67,13 +67,6 @@ def _get_cache(checksum: str = ""):
                     return _CACHE[checksum]
             except Exception:
                 pass
-    if _CACHE:
-        return list(_CACHE.values())[-1]
-    try:
-        files = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".elf")]
-        if files:
-            latest = max(files, key=os.path.getmtime)
-            parse_elf(latest)
             if _CACHE:
                 return list(_CACHE.values())[-1]
     except Exception:

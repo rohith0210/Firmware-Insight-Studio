@@ -38,7 +38,7 @@ const GROUPS: { lbl: string; items: { id: View; t: string; ic: string }[] }[] = 
   },
 ];
 
-export default function Sidebar({ view, setView, hasResult }: { view: View; setView: (v: View) => void; hasResult: boolean }) {
+export default function Sidebar({ view, setView, hasResult, onResetBinary }: { view: View; setView: (v: View) => void; hasResult: boolean; onResetBinary?: () => void }) {
   return (
     <aside className="side">
       <div className="brand">
@@ -52,6 +52,16 @@ export default function Sidebar({ view, setView, hasResult }: { view: View; setV
           <small className="mut">workbench v1.5</small>
         </div>
       </div>
+      {hasResult && onResetBinary && (
+        <div className="px-3 py-2 border-b border-[var(--line)]">
+          <button
+            onClick={onResetBinary}
+            className="w-full py-1.5 px-2.5 rounded bg-[var(--a-dim)] border border-[var(--a-dim)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black transition font-mono text-[11px] font-bold flex items-center justify-center gap-1.5"
+          >
+            <span>📂</span> Open New ELF
+          </button>
+        </div>
+      )}
       {GROUPS.map(g => (
         <div className="nav-grp" key={g.lbl}>
           <div className="lbl">{g.lbl}</div>
