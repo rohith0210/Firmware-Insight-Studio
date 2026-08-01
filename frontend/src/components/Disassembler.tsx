@@ -252,64 +252,115 @@ export default function Disassembler({
     fetchDisasm();
   }, [name, result?.checksum]);
 
-  // STEP OVER (Single 'n' command)
+  // STEP OVER (Offline instruction advance or Live GDB 'n')
   const handleStepOver = (): boolean => {
-    if (!isLiveDebug) return false;
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
       wsRef.current.send(JSON.stringify({ type: "STEP_OVER" }));
       push("o", "⤼ Step Over ('n')");
+      return true;
+    }
+
+    // Offline Stepping Logic
+    if (dis && dis.instructions && dis.instructions.length > 0) {
+      const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
+      const currIdx = dis.instructions.findIndex(i => (i.addr & ~1) === currentPc);
+      const nextInstr = currIdx >= 0 && currIdx + 1 < dis.instructions.length
+        ? dis.instructions[currIdx + 1]
+        : dis.instructions[0];
+
+      const nextAddr = nextInstr ? nextInstr.addr : currentPc + 2;
+      setPc(nextAddr);
+      pcRef.current = nextAddr;
+      setRegs(prev => ({
+        ...prev,
+        PC: nextAddr,
+        R0: (prev.R0 + 1) & 0xFFFFFFFF,
+        R1: (prev.R1 + 4) & 0xFFFFFFFF,
+      }));
+      push("o", `⤼ [OFFLINE STEP OVER] PC ➔ 0x${nextAddr.toString(16).padStart(8, "0")} (${nextInstr ? nextInstr.mn + " " + nextInstr.op : ""})`);
       return true;
     }
     return false;
   };
 
-  // STEP INTO (Single 's' command)
+  // STEP INTO (Follow call target or advance instruction)
   const handleStepInto = () => {
-    if (!isLiveDebug) return;
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
       wsRef.current.send(JSON.stringify({ type: "STEP_INTO" }));
       push("o", "⤵ Step Into ('s')");
       return;
     }
+
+    // Offline Step Into Logic
+    if (dis && dis.instructions && dis.instructions.length > 0) {
+      const currentPc = pc !== null ? (pc & ~1) : (dis.func.addr & ~1);
+      const currInstr = dis.instructions.find(i => (i.addr & ~1) === currentPc);
+
+      if (currInstr && (currInstr.mn === "bl" || currInstr.mn === "blx" || currInstr.mn === "b" || currInstr.mn === "call")) {
+        const targetStr = currInstr.op.split(" ")[0].replace(/[<>]/g, "");
+        const targetSym = result.symbols?.find(s => s.name === targetStr);
+        if (targetSym) {
+          setName(targetSym.name);
+          setPc(targetSym.value);
+          pcRef.current = targetSym.value;
+          setRegs(prev => ({ ...prev, PC: targetSym.value, LR: currentPc + 4 }));
+          push("b", `⤵ [OFFLINE STEP INTO] Branching to ${targetSym.name} @ 0x${targetSym.value.toString(16)}`);
+          return;
+        }
+      }
+      handleStepOver();
+    }
   };
 
-  // RUN / CONTINUE (Send GDB RSP 'c' ONCE, or HALT with Interrupt \x03 ONCE)
+  // RUN / CONTINUE (Toggle active execution loop)
   const handleRunToggle = () => {
-    if (!isLiveDebug) return;
-
     if (status === "running") {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
         wsRef.current.send(JSON.stringify({ type: "HALT" }));
       }
       setStatus("halted");
-      push("b", "⏸ Halted by user (\\x03)");
+      push("b", "⏸ Execution Halted");
     } else {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
         wsRef.current.send(JSON.stringify({ type: "RUN" }));
       }
       setStatus("running");
-      push("a", "▶ Continue ('c')");
+      push("a", "▶ Target Running (Simulated Execution Loop)");
     }
   };
 
-  // RESET TARGET (Send monitor reset halt ONCE)
+  // Auto-step interval timer when status === "running" in Offline Mode
+  useEffect(() => {
+    if (status !== "running" || isLiveDebug) return;
+    const interval = setInterval(() => {
+      handleStepOver();
+    }, 400);
+    return () => clearInterval(interval);
+  }, [status, isLiveDebug, dis, pc]);
+
+  // RESET TARGET
   const handleReset = () => {
-    if (!isLiveDebug) {
-      if (dis) {
-        setPc(dis.func.addr);
-        pcRef.current = dis.func.addr;
-        setRegs(prev => ({ ...prev, PC: dis.func.addr }));
-      }
+    setStatus("halted");
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isLiveDebug) {
+      wsRef.current.send(JSON.stringify({ type: "RESET" }));
+      push("a", "↺ Target Reset (monitor reset halt)");
       return;
     }
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "RESET" }));
-      setStatus("halted");
-      push("a", "↺ Target Reset (monitor reset halt)");
-    }
+    const resetAddr = (dis && dis.func ? dis.func.addr : (result.symbols.find(s => s.name === name)?.value || 0x080001c5));
+    setPc(resetAddr);
+    pcRef.current = resetAddr;
+    setRegs(prev => ({
+      ...prev,
+      PC: resetAddr,
+      SP: 0x20004000,
+      LR: 0x080001b1,
+      R0: 0x20000100,
+      R1: 0x00000000,
+      R2: 0x40021000,
+      R3: 0x00000001,
+    }));
+    push("a", `↺ [OFFLINE RESET] PC reset to 0x${resetAddr.toString(16).padStart(8, "0")}`);
   };
 
   const toggleBp = (addr: number) => {
@@ -520,69 +571,58 @@ export default function Disassembler({
           </button>
         </div>
 
-        {/* DEBUGGER CONTROLS (DISABLED WHEN HARDWARE NOT CONNECTED) */}
+        {/* DEBUGGER CONTROLS (ACTIVE FOR BOTH LIVE & OFFLINE INTERACTION) */}
         <div className="flex items-center gap-2">
-          {(() => {
-            const isHardwareActive = isLiveDebug || wsConnected;
-            const disabledTitle = "Hardware not connected. Connect Local Debug Agent (ws://127.0.0.1:9001) or ST-Link to enable live CPU controls.";
-            return (
-              <>
-                <button
-                  onClick={handleRunToggle}
-                  disabled={!isHardwareActive}
-                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause execution" : "Run target"}
-                  className={`mono text-xs px-3 py-1 rounded transition flex items-center gap-1 font-bold ${
-                    !isHardwareActive
-                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                      : status === "running"
-                      ? "bg-amber-600 text-white hover:bg-amber-500 font-bold"
-                      : "bg-emerald-600 text-white hover:bg-emerald-500 font-bold"
-                  }`}
-                >
-                  <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
-                </button>
+          <button
+            onClick={handleRunToggle}
+            title={status === "running" ? "Pause execution (F5)" : "Run target execution (F5)"}
+            className={`mono text-xs px-3 py-1 rounded transition flex items-center gap-1 font-bold ${
+              status === "running"
+                ? "bg-amber-600 text-white hover:bg-amber-500 shadow-md"
+                : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md"
+            }`}
+          >
+            <span>{status === "running" ? "⏸ Pause" : "▶ Run"}</span>
+          </button>
 
-                <button
-                  onClick={handleStepOver}
-                  disabled={!isHardwareActive || status === "running"}
-                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to step over" : "Step Over (stay in current function listing)"}
-                  className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-                    !isHardwareActive || status === "running"
-                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                      : "bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
-                  }`}
-                >
-                  <span>↷ Step Over</span>
-                </button>
+          <button
+            onClick={handleStepOver}
+            disabled={status === "running"}
+            title="Step Over (stay in current function listing)"
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+              status === "running"
+                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                : "bg-[#121922] border-[var(--line)] hover:border-[var(--a)] text-[var(--fg)] hover:text-white"
+            }`}
+          >
+            <span>↷ Step Over</span>
+          </button>
 
-                <button
-                  onClick={handleStepInto}
-                  disabled={!isHardwareActive || status === "running"}
-                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to step into" : "Step Into (follow function calls like HAL_Init)"}
-                  className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
-                    !isHardwareActive || status === "running"
-                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                      : "bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
-                  }`}
-                >
-                  <span>⤶ Step Into</span>
-                </button>
+          <button
+            onClick={handleStepInto}
+            disabled={status === "running"}
+            title="Step Into (follow function calls like HAL_Init or subroutine calls)"
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition flex items-center gap-1 ${
+              status === "running"
+                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                : "bg-[rgba(51,214,194,0.18)] border-[var(--a)] text-[var(--a)] hover:bg-[var(--a)] hover:text-black shadow-sm"
+            }`}
+          >
+            <span>⤶ Step Into</span>
+          </button>
 
-                <button
-                  onClick={handleReset}
-                  disabled={!isHardwareActive || status === "running"}
-                  title={!isHardwareActive ? disabledTitle : status === "running" ? "Pause target execution first to reset" : "Reset Target PC to function entry point"}
-                  className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
-                    !isHardwareActive || status === "running"
-                      ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
-                      : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
-                  }`}
-                >
-                  ↺ Reset Target
-                </button>
-              </>
-            );
-          })()}
+          <button
+            onClick={handleReset}
+            disabled={status === "running"}
+            title="Reset Target PC to function entry point"
+            className={`mono text-xs px-3 py-1 rounded border font-bold transition ${
+              status === "running"
+                ? "bg-black/40 border border-white/10 text-gray-500 cursor-not-allowed opacity-50"
+                : "bg-black/40 border-red-500/40 text-red-400 hover:bg-red-500/20"
+            }`}
+          >
+            ↺ Reset Target
+          </button>
         </div>
       </div>
 
