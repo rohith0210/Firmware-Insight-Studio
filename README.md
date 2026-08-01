@@ -1,8 +1,8 @@
 <p align="center">
-  <h1 align="center">Firmware Insight Studio</h1>
+  <h1 align="center">Firmware Insight Studio v2.0</h1>
   <p align="center">
-    <strong>A professional firmware analysis and visualization platform for embedded engineers.</strong><br/>
-    Static ELF introspection, interactive disassembly, memory layout visualization, and firmware optimization in a unified workbench.
+    <strong>Offline Virtual Embedded Debugger, Firmware Replay Engine &amp; Introspection IDE</strong><br/>
+    Turn any microcontroller ELF binary into a fully interactive, professional embedded IDE debugging session — no hardware required.
   </p>
   <p align="center">
     <a href="https://github.com/rohith0210/Firmware-Insight-Studio/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/></a>
@@ -16,447 +16,166 @@
 
 ---
 
-<!-- DEMO_PLACEHOLDER_START -->
-<p align="center">
-  <img
-    src="https://github.com/user-attachments/assets/8d6d34ec-94bb-45c3-98de-8cbfb8392b21"
-    width="300"
-    alt="Firmware Insight Studio Logo"
-  />
-  <br/> <em>Firmware Insight Studio Overview &amp; Memory Introspection Workspace</em>
-</p>
-<!-- DEMO_PLACEHOLDER_END -->
+## ⚡ What is Firmware Insight Studio v2.0?
 
----
+**Firmware Insight Studio v2.0** is an **Offline Virtual Embedded Debugger & Firmware Replay IDE**. 
 
-## Why Firmware Insight Studio?
-
-Traditional embedded toolchains rely on command-line utilities such as `readelf`, `objdump`, `nm`, and `size`. While accurate, these tools produce flat text dumps that require tedious manual cross-referencing to answer basic architectural questions:
-
-* *Which module is responsible for the recent 15 KB Flash size jump?*
-* *Is this memory region overflow caused by static allocations or bloated vector tables?*
-* *Are unreferenced library subroutines linked into `.text` despite `-ffunction-sections`?*
-
-**Firmware Insight Studio** replaces disjointed CLI invocation with an integrated visual workspace:
-
-| Standard CLI Tools (`readelf` / `objdump`) | Firmware Insight Studio Workspace |
-|:---|:---|
-| Text-based section headers (`readelf -S`) | Interactive memory map & squarified Flash/RAM treemaps |
-| Flat symbol table listings (`nm --size-sort`) | Filterable symbol explorer with module attribution & scope categorization |
-| Manual CLI disassembly (`arm-none-eabi-objdump -d`) | Context-aware disassembler with control flow visualization |
-| Manual string search for build flags | Automatic toolchain identification & `.ARM.attributes` inspection |
-| Manual linker map review | Rule-based dead code identification & reclaimable byte calculation |
-
----
-
-## Workspace Features
-
-### 1. Overview Workspace
-* **Purpose**: Provides high-level diagnostics immediately upon loading a firmware binary payload.
-* **Key Capabilities**:
-  * Automatic toolchain string detection from `.comment` section metadata.
-  * FLASH and SRAM capacity utilization gauges with overflow indicators.
-  * Checksum verification (CRC32) and entry point address mapping.
-  * Top size contributors breakdown for Flash and RAM.
-* **Status**: **Fully Implemented**.
-
-### 2. Memory Analysis Workspace
-* **Purpose**: Interactive visual analysis of Flash and RAM distribution across sections and translation units.
-* **Key Capabilities**:
-  * **Squarified Treemap**: Visual representation of Flash memory allocations with color ramps proportional to function size.
-  * **Address-True Memory Map**: Vertical memory layout visualization showing physical section boundaries (`.text`, `.rodata`, `.data`, `.bss`).
-  * **Section Explorer**: Tabular section inspection with type filtering, address alignment metrics, and flags (`SHF_ALLOC`, `SHF_EXECINSTR`).
-* **Status**: **Fully Implemented**.
-
-### 3. Code Investigator
-* **Purpose**: Single-pane inspection combining DWARF source mapping, disassembly, and AST decompilation.
-* **Key Capabilities**:
-  * Real-time DWARF debug source code viewing for binaries compiled with `-g`.
-  * **Pseudocode Fallback**: Reconstructed C AST representation when source files are unavailable locally.
-  * Synchronized line-level assembly navigation.
-* **Status**: **Fully Implemented**.
-
-### 4. Call Graph Workspace
-* **Purpose**: Interactive function dependency graph visualization.
-* **Key Capabilities**:
-  * ReactFlow-powered call graph visualization derived from symbol relocation references.
-  * Focus node selection with leaf node highlighting.
-  * Direct navigation from call graph nodes into the Code Investigator.
-* **Status**: **Fully Implemented**.
-
-### 5. Execution Workspace
-* **Purpose**: Dual-mode instruction workspace distinguishing static firmware introspection from live debugging.
-* **Key Capabilities**:
-  * **Static Analysis Mode**: Disassembly view with instruction mnemonic decoding, machine code hex display, and register access pattern tagging (`touched` / `written`).
-  * **Live Debug Mode**: UI hooks prepared for GDB / OpenOCD server connection (Register file, Stack frames, Program Counter).
-* **Status**: Static Mode **Fully Implemented**; Live Debug GDB bridge **In Progress**.
-
-### 6. Device Explorer
-* **Purpose**: Target MCU hardware layout matching and peripheral register map inspection.
-* **Key Capabilities**:
-  * Pre-configured memory layouts for popular microcontrollers (STM32, NRF52, RP2040, ESP32, SAMD, MSP430).
-  * Peripheral utilization auto-detection (GPIO, UART, SPI, I2C, USB, DMA, ADC, CAN).
-  * System View Description (SVD) register mapping hooks.
-* **Status**: **Fully Implemented**.
-
-### 7. Optimization Workspace
-* **Purpose**: Automated firmware footprint reduction and linker configuration checks.
-* **Key Capabilities**:
-  * **Dead Code Identification**: Finds unreferenced global functions and calculates total reclaimable Flash bytes.
-  * **Rule-Based Recommendations**: Highlights missing `-ffunction-sections`, `-fdata-sections`, or `--gc-sections` flags.
-* **Status**: **Fully Implemented**.
-
-### 8. Reports & Comparison Workspace
-* **Purpose**: Firmware metrics export and multi-build delta tracking.
-* **Key Capabilities**:
-  * Export structured analysis reports in JSON and CSV formats.
-  * Build comparison engine tracking size deltas between two ELF binaries (`v1` vs `v2`).
-  * Headless CLI (`cli.py`) for CI/CD pull request automated comment generation.
-* **Status**: **Fully Implemented**.
-
----
-
-## Supported Architectures
-
-Disassembly decoding and register schema attribution support the following target architectures:
-
-| Architecture | Architecture Variant / ISA | Decoder Engine | Disassembly Support |
-|:---|:---|:---|:---|
-| **ARM Cortex-M** | ARMv6-M, ARMv7-M, ARMv8-M (Thumb / Thumb-2) | Capstone Engine | **Full** |
-| **ARM Cortex-A** | ARMv7-A (ARM / Thumb) | Capstone Engine | **Full** |
-| **AArch64** | ARMv8-A 64-bit | Capstone Engine | **Full** |
-| **RISC-V** | RV32I / RV64I / RV32C | Capstone / GNU objdump | **Full** |
-| **x86 / x86-64** | IA-32 / AMD64 | Capstone Engine | **Full** |
-| **Xtensa** | ESP32 / ESP8266 | GNU objdump fallback | **Supported** |
-| **AVR / 8051** | AVR 8-bit / MCS-51 | Symbol & Section analysis | **Metadata Only** |
-
-*Note: Disassembly capabilities depend on available ELF relocation metadata and architecture disassembler backends.*
-
----
-
-## Supported Firmware Formats
-
-| Format | File Extension | Symbol Metadata | Disassembly | Source Mapping |
-|:---|:---|:---|:---|:---|
-| **ELF Executable** | `.elf`, `.out`, `.axf` | **Full** | **Full** | Supported (DWARF) |
-| **Relocatable Object** | `.o` | **Full** | **Full** | Supported (DWARF) |
-| **Raw Binary** | `.bin` | None | Requires Offset | Unavailable |
-| **Intel HEX** | `.hex` | None | Address Only | Unavailable |
-
----
-
-## Analysis Capabilities
-
-* **ELF Parsing**: Complete header parsing (`e_type`, `e_machine`, `e_entry`, `e_flags`).
-* **Section Analysis**: Header extraction, alignment calculation, virtual vs. physical address mapping.
-* **Symbol Analysis**: Scope categorization (Local, Global, Weak), STT type extraction, size sorting.
-* **Memory Visualization**: Address-true stack/heap/flash diagrams and squarified size treemaps.
-* **Disassembly Engine**: Machine instruction decoding, Thumb mode detection, register mutation tracking.
-* **Call Graph Introspection**: Static call edge generation from relocation tables and instruction target offsets.
-* **Device Identification**: Heuristic target detection via vector table signatures and device memory maps.
-* **Build Comparison**: Differential symbol analysis reporting added, deleted, or expanded subroutines.
-
----
-
-## Screenshots
-
-<p align="center">
-  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-04-11" src="https://github.com/user-attachments/assets/61eaaa0b-bd86-41b6-ba98-8458b002dc87" alt="Overview Workspace" width="48%" />
-  <img width="1919" height="924" alt="Screenshot From 2026-07-31 00-06-54" src="https://github.com/user-attachments/assets/25229322-3e6c-4533-b0c8-d22dd28712e6" alt="Memory Analysis Treemap" width="48%"/>
-</p>
-<p align="center">
-  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/8dfcf1f0-288b-4aa3-9033-a8d17b5c72ab" alt="Code Investigator Workspace" width="48%"/>
-  <img width="1919" height="924" alt="image" src="https://github.com/user-attachments/assets/0aa55eb9-c4ed-4e86-affa-b037ff49c013" alt="Call Graph Inspector" width="48%"/>
-</p>
-
----
-
-## 🏗️ Technical Architecture
+Instead of requiring physical target hardware, ST-Link programmers, OpenOCD, or GDB servers, Firmware Insight Studio parses the uploaded `.elf`, `.axf`, or `.out` binary file and builds a **Virtual Execution Engine**. The uploaded firmware itself becomes an active, interactive debugging session that visually and functionally matches **STM32CubeIDE**, **Keil uVision**, or **VS Code Cortex Debug**.
 
 ```text
-Browser ➔ Firmware Insight Studio ➔ WebSocket ➔ Local Debug Agent ➔ OpenOCD ➔ GDB Server ➔ ST-Link ➔ STM32
+                               Firmware Insight Studio v2.0
+                                             │
+                                   Upload microcontroller.elf
+                                             │
+                                   ELF + DWARF Parser Engine
+                                             │
+      ┌────────────────────────┬─────────────┴──────────────┬────────────────────────┐
+      │                        │                            │                        │
+      ▼                        ▼                            ▼                        ▼
+ Symbol Explorer          Source View                 Assembly View            Memory Layout
+      │                        │                            │                        │
+      └────────────────────────┴─────────────┬──────────────┴────────────────────────┘
+                                             ▼
+                                  Virtual Execution Engine
+                                             │
+                  ├──────────────────────────┼──────────────────────────┤
+                  ▼                          ▼                          ▼
+       Step Into / Step Over      Call Lineage & Call Stack    Virtual Register State
+       (DWARF + Disassembly)      (Stack Frames & Local Vars)  (CubeIDE Amber Highlights)
 ```
 
 ---
 
-## Welcome to Live Embedded Debugging
+## 🚀 Key Features & Architectural Highlights
 
-Connect your **STM32 board** to **Firmware Insight Studio** using **ST-Link + OpenOCD + the Local Debug Agent**.
+### 1. ⚡ Pure Offline Virtual Debugger & Replay Engine
+- **No Physical Hardware Required**: Drop any microcontroller ELF file to step line-by-line through machine instructions and source lines offline.
+- **Full Stepping Toolbar**:
+  - `▶ Run` / `⏸ Pause`: Toggles continuous instruction execution with automatic breakpoint checking.
+  - `↷ Step Over`: Advances instruction/source line within the current function listing.
+  - `⤶ Step Into`: Follows subroutine call targets (`bl`, `blx`, `call`), pushes a new frame onto the Call Stack, and sets PC to the target function's entry line.
+  - `⤴ Step Out`: Pops the top Call Stack frame and returns Virtual PC to the Link Register (`LR`).
+  - `↺ Reset Target`: Resets Virtual PC directly to `main()` line 1 and clears the Call Stack.
 
-> **Estimated setup time**: 2–3 minutes
+### 2. 📍 Call Lineage & Entry Trace Banner
+- Positioned directly above the disassembly viewport:
+  - **Caller Origin**: `Called from: Reset_Handler ➔ main (@ 0x080001c5)`
+  - **Target Entry**: `HAL_Init (@ 0x08000410)`
+  - **Return Vector**: `RETURN TARGET (LR): 0x0800033c`
+- Provides instant visual lineage showing where execution entered from and where it will return upon exit.
 
----
+### 3. 🥞 Call Stack & Local Variable Inspector
+- Renders active stack frames (`FRAME #0`, `FRAME #1`, `FRAME #2`) under the right sidebar tab:
+  - Function names, entry addresses, and caller source offsets.
+  - **Local Variables & Scope**: Displays SRAM addresses (`0x2000xxxx`), types (`uint32_t`, `HAL_StatusTypeDef`), and virtual variable states.
 
-### Step 1: Install Dependencies
+### 4. 🎛️ Virtual CPU Core Registers (CubeIDE-Style)
+- Simulates ARM Cortex-M 16-register payload (`R0–R12`, `SP`, `LR`, `PC`, `xPSR`, `PRIMASK`).
+- **Amber Change Highlights**: Registers modified by current instructions glow inCubeIDE-style amber text (`bg-amber-500/30 border-amber-400 text-amber-200`).
+- **Thumb-2 LSB Address Masking**: Enforces `(pc & ~1) === (ins.addr & ~1)` so Thumb-2 LSB addresses remain 100% aligned with glowing green instruction highlights.
 
-Verify prerequisites for your operating system:
+### 5. 📄 Synchronized Code Investigator (C Source View)
+- **Source View (`main.c` / C Source)**: Highlighting active C source code line (`HAL_Init(); ◄ CURRENT`).
+- **Assembly View**: Thumb-2 assembly listing with branch comments and MMIO peripheral target annotations.
+- **Hex Viewer**: Raw machine code byte display synced with memory addresses.
 
-- ✓ **OpenOCD**
-- ✓ **Python 3.10+**
-- ✓ **ST-Link Drivers**
-- ✓ **websockets package**
-
-#### Linux
-```bash
-sudo apt install openocd
-python3 -m pip install websockets
-```
-
-#### Windows
-1. Download OpenOCD binaries & install ST-Link USB driver.
-2. Install Python 3.10+ from python.org.
-```cmd
-pip install websockets
-```
-
-#### macOS
-```bash
-brew install openocd
-pip3 install websockets
-```
-
----
-
-### Step 2: Start the GDB Server
-
-OpenOCD acts as the communication bridge between your ST-Link programmer and the debugger:
-
-```bash
-openocd \
-  -f interface/stlink.cfg \
-  -f target/stm32f1x.cfg
-```
-
-#### Expected Output
-```text
-✓ ST-Link detected
-✓ Target voltage
-✓ Cortex-M3 detected
-✓ GDB Server listening on port 3333
-```
+### 6. 📊 Memory Map, Treemaps & Peripheral MMIO Inspector
+- **Address-True Memory Layout**: Flash (`.text`, `.rodata`) vs SRAM (`.data`, `.bss`) physical boundaries.
+- **Squarified Treemap**: Visual size allocation per translation unit.
+- **STM32 Special Function Register (SFR) Maps**: Interactive register maps for `GPIOA`, `GPIOB`, `GPIOC`, `RCC`, `SysTick`, `NVIC`, `USART1`, `TIM2`.
 
 ---
 
-### Step 3: Start the Firmware Insight Local Debug Agent
-
-```bash
-python3 debug-agent/fis_debug_agent.py
-```
-
-#### Expected Output
-```text
-Firmware Insight Studio
-Local Debug Agent
-
-Listening
-ws://127.0.0.1:9001
-
-Waiting for Browser...
-```
-
----
-
-### Step 4: Open Firmware Insight Studio & Connect
-
-Open the web app at:
-`http://localhost:5173`
-
-Click:
-`Execution Workspace` ➔ `Connect Local Agent`
-
-The UI automatically executes the connection handshake:
-
-```text
-Searching for Local Agent...
-  ↓
-Agent Found
-  ↓
-Connecting to GDB...
-  ↓
-Connected
-  ↓
-STM32F103C8 detected
-  ↓
-Debugger Ready
-```
-
----
-
-### 🟢 Connection Status Card & Auto Detect Diagnostics
-
-When connecting or running automated diagnostics via the **Run Diagnostics** button, the workspace monitors target health across all connection nodes:
-
-```text
-Connection Status
-
-🟢 Browser
-🟢 Local Agent
-🟢 OpenOCD
-🟢 GDB Server
-🟢 ST-Link
-🟢 STM32 Target
-
-Status: Debugger Ready
-```
-
-If any component in the hardware chain is missing, actionable guidance is presented:
-
-```text
-❌ OpenOCD not running
-Start OpenOCD and try again.
-```
-*or*
-```text
-❌ ST-Link not detected
-Check USB connection.
-```
-
----
-
-### ⚡ Unlocked Debugging Features After Connection
-
-Once connected, full interactive hardware control is enabled across the workspace:
-
-- ✓ **CPU Registers**
-- ✓ **Live Program Counter**
-- ✓ **Stack Frames**
-- ✓ **Call Stack**
-- ✓ **Memory Viewer**
-- ✓ **Peripheral Registers**
-- ✓ **Breakpoints**
-- ✓ **Watchpoints**
-- ✓ **Source-level Debugging**
-- ✓ **Step Into**
-- ✓ **Step Over**
-- ✓ **Continue**
-- ✓ **Reset Target**
-
----
-
-## Local Development & Setup
-
-### Backend Setup
-
-```bash
-# Navigate to backend directory
-cd backend
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install python dependencies
-pip install -r requirements.txt
-
-# Start FastAPI development server
-uvicorn main:app --reload --port 8000
-```
-
-### Frontend Setup
-
-```bash
-# Navigate to frontend directory in a new terminal
-cd frontend
-
-# Install node dependencies
-npm install
-
-# Start Vite development server
-npm run dev
-```
-
-Open your browser at `http://localhost:5173`.
-
----
-
-## Project Structure
+## 📂 Codebase Directory & File Summary
 
 ```text
 Firmware-Insight-Studio/
 ├── backend/
-│   ├── main.py              # FastAPI server, ELF parsing pipeline, disassembly engine
-│   ├── cli.py               # Headless CLI datasheet & CI build diff tool
-│   └── requirements.txt     # Python dependencies (fastapi, pyelftools, capstone)
+│   ├── main.py                 # FastAPI backend server (pyelftools, Capstone disassembly, DWARF parsing)
+│   ├── requirements.txt        # Python backend dependencies
+│   └── venv/                   # Python virtual environment
 ├── frontend/
-│   ├── src/
-│   │   ├── App.tsx          # Workbench shell & tab state management
-│   │   ├── main.tsx         # React application entry point
-│   │   ├── index.css        # Core styling & design tokens
-│   │   ├── components/
-│   │   │   ├── Overview.tsx                # Dashboard gauges & summary
-│   │   │   ├── MemoryMap.tsx               # Flash/RAM treemap & address map
-│   │   │   ├── SectionTable.tsx            # Section explorer grid
-│   │   │   ├── CodeInvestigator.tsx        # Combined Source/Disassembly workspace
-│   │   │   ├── Disassembler.tsx            # Instruction decoder & register decoder
-│   │   │   ├── CallGraph.tsx               # Interactive ReactFlow call graph
-│   │   │   ├── PeripheralDashboard.tsx     # Hardware peripheral explorer
-│   │   │   ├── OptimizationAssistant.tsx   # Dead code & optimization recommendations
-│   │   │   ├── BuildCompare.tsx            # Binary diff engine
-│   │   │   ├── InspectorPanel.tsx          # Docked symbol inspector
-│   │   │   ├── Ribbon.tsx                  # Target selector & quick actions
-│   │   │   ├── Sidebar.tsx                 # Navigation bar
-│   │   │   ├── ErrorBoundary.tsx           # Global React error handler
-│   │   │   └── GlobalSearchModal.tsx       # Symbol & section quick search modal
-│   │   └── utils/
-│   │       └── devices.ts   # Microcontroller memory map database
-│   ├── package.json
-│   └── vite.config.ts
-├── test_firmware.c          # Sample firmware compilation source
-├── v1.elf                   # Sample ELF test binary (v1)
-├── v2.elf                   # Sample ELF test binary (v2)
-└── README.md
+│   ├── index.html              # HTML5 entry page
+│   ├── package.json            # Vite + React dependencies & scripts
+│   ├── vite.config.ts          # Vite build configuration
+│   └── src/
+│       ├── App.tsx             # Primary navigation shell & state dispatcher
+│       ├── apiConfig.ts        # Backend API URL resolver
+│       ├── components/
+│       │   ├── WelcomeDropZone.tsx      # Initial clean drag-and-drop landing screen
+│       │   ├── InvestigationWorkspace.tsx # Code Investigator (Source, Assembly, Hex, Symbol Inspector)
+│       │   ├── Disassembler.tsx         # Virtual Debugger & Instruction Stepping Workbench
+│       │   ├── Overview.tsx             # High-level binary diagnostics & RAM/Flash utilization gauges
+│       │   ├── MemoryMap.tsx            # Physical memory layout & squarified size treemaps
+│       │   ├── CallGraph.tsx            # ReactFlow interactive function call tree
+│       │   ├── SymbolExplorer.tsx       # Filterable symbol table browser
+│       │   ├── SectionTable.tsx         # ELF section header inspector
+│       │   ├── ObjectFiles.tsx          # Object file / compilation unit breakdown
+│       │   ├── Peripherals.tsx          # Hardware peripheral utilization grid
+│       │   ├── IsrAnalyzer.tsx          # Interrupt vector table & ISR priority analyzer
+│       │   ├── Compare.tsx              # Differential build comparator (v1 vs v2 ELF)
+│       │   ├── Optimize.tsx             # Dead code analyzer & reclaimable Flash calculator
+│       │   └── Ribbon.tsx               # Top navigation ribbon
+│       └── utils/
+│           ├── VirtualExecutionEngine.ts # Offline Virtual Debugger state machine & frame stack
+│           ├── DebuggerEngine.ts        # Event subscription manager for PC state
+│           └── devices.ts               # Microcontroller hardware definitions (STM32, NRF52, RP2040, etc.)
+└── README.md                   # Project documentation
 ```
 
 ---
 
-## Current Status
+## 🛠️ Architecture & Microcontroller Support
 
-* **Implemented**:
-  * Full ELF header, section table, and symbol table parsing.
-  * Memory treemap visualization and physical address map rendering.
-  * Disassembly decoding for ARM Thumb/ARM32, AArch64, RISC-V, and x86.
-  * Combined Code Investigator workspace with DWARF source mapping.
-  * Static dead code detection and optimization rule evaluation.
-  * Headless CLI reporting and PR comment diff formatting.
-* **In Progress**:
-  * OpenOCD / GDB socket connector for Live Debug mode.
-  * System View Description (SVD) XML parser for custom register definitions.
-* **Planned**:
-  * Advanced AST-based C decompiler pass.
-  * FreeRTOS task & stack watermark analysis.
+| Target Architecture | Variant / ISA | Disassembly Engine | Virtual Execution Support |
+|:---|:---|:---|:---|
+| **ARM Cortex-M** | ARMv6-M, ARMv7-M, ARMv8-M (Thumb/Thumb-2) | Capstone Engine | **Full Interactive Replay** |
+| **ARM Cortex-A** | ARMv7-A (ARM / Thumb) | Capstone Engine | **Full** |
+| **AArch64** | ARMv8-A 64-bit | Capstone Engine | **Full** |
+| **RISC-V** | RV32I / RV64I / RV32C | Capstone / GNU objdump | **Full** |
+| **Xtensa** | ESP32 / ESP8266 | Capstone / Fallback | **Supported** |
+| **x86 / x86-64** | IA-32 / AMD64 | Capstone Engine | **Full** |
 
 ---
 
-## Roadmap
+## 💻 Local Installation & Setup
 
-### Phase 1: Near-Term Enhancements (v1.6)
-- [ ] **Live Debugging Integration**: Direct GDB/OpenOCD socket bridge for live register stepping, breakpoint toggling, and memory inspection in the Execution Workspace.
-- [ ] **CMSIS-SVD Peripheral Integration**: Support for uploading custom SVD XML files to auto-populate hardware register maps in the Device Explorer.
-- [ ] **DWARF Call Graph Precision**: Extraction of exact subprogram call edges directly from DWARF debug tags (`DW_TAG_subprogram` / `DW_AT_call_file`).
+### Prerequisites
+- **Python**: 3.10 or higher
+- **Node.js**: 18.0 or higher (`npm`)
 
-### Phase 2: Advanced Analysis & Decompilation (v2.0)
-- [ ] **Control-Flow AST Decompiler Engine**: Enhanced control-flow reconstruction (`if/else`, loops, variable types) for stripped binaries lacking source code.
-- [ ] **RTOS Task & Stack Inspection**: Static allocation and stack watermark analysis for FreeRTOS, Zephyr OS, and CMSIS-RTOS targets.
-- [ ] **Multi-Binary Diff Comparison**: Side-by-side visual code inspector diffing two arbitrary `.elf` revisions.
+### 1. Clone & Setup Backend
+```bash
+git clone https://github.com/rohith0210/Firmware-Insight-Studio.git
+cd Firmware-Insight-Studio/backend
 
-### Phase 3: Platform Extensibility (v2.5)
-- [ ] **Extensible Python Plugin API**: Custom user-defined rule passes for security checks, memory safety audits, and custom MCU targets.
-- [ ] **Headless CI/CD GitHub Action**: Official GitHub Action marketplace integration for pull request size impact comments.
+# Create and activate Python virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start FastAPI backend server
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### 2. Setup & Launch Frontend
+Open a new terminal window:
+```bash
+cd Firmware-Insight-Studio/frontend
+
+# Install dependencies
+npm install
+
+# Launch Vite development server
+npm run dev
+```
+
+Open `http://localhost:5173` in your browser, drag and drop any microcontroller `.elf` file, and experience **Firmware Insight Studio v2.0**!
 
 ---
 
-## Contributing
+## 📜 License
 
-Contributions to Firmware Insight Studio are welcome! Please feel free to submit Pull Requests, report bugs, or request features via GitHub Issues.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Distributed under the **MIT License**. See `LICENSE` for details.
