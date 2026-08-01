@@ -158,14 +158,12 @@ export default function Disassembler({
         if (data && !data.error && data.instructions && data.instructions.length > 0) {
           disasmCacheRef.current.set(name, data);
           setDis(data);
-          // ONLY set initial static PC if PC is null. Do NOT overwrite live hardware PC!
-          if (pc === null) {
-            const entryAddr = data.func.addr;
-            setPc(entryAddr);
-            pcRef.current = entryAddr;
-            setRegs(prev => ({ ...prev, PC: entryAddr }));
-          }
-          push("a", `Loaded '${name}' (${data.instructions.length} instrs)`);
+          // Set default line highlight on the VERY FIRST line/instruction of the respective function/file
+          const firstLineAddr = data.instructions[0].addr;
+          setPc(firstLineAddr);
+          pcRef.current = firstLineAddr;
+          setRegs(prev => ({ ...prev, PC: firstLineAddr }));
+          push("a", `Loaded '${name}' (${data.instructions.length} instrs) · Highlighted default first line @ 0x${firstLineAddr.toString(16).padStart(8, "0")}`);
         } else {
           setDis(null);
           const errDetail = {
@@ -542,6 +540,24 @@ export default function Disassembler({
             </div>
             <div className="mono text-[10px] text-[var(--mut)]">
               PC: 0x{(pc || 0).toString(16).padStart(8, "0")} · Steps: {steps}
+            </div>
+          </div>
+
+          {/* CALL LINEAGE TRACE (WHERE WE GOT IN FROM & RETURN TARGET) */}
+          <div className="bg-[#070c14] border-b border-[var(--line)] px-4 py-1.5 flex items-center justify-between font-mono text-[11px] flex-shrink-0">
+            <div className="flex items-center gap-2 text-gray-300">
+              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30">
+                📍 CALL LINEAGE
+              </span>
+              <span className="text-gray-400">Called from:</span>
+              <span className="text-cyan-300 font-bold">{name === "main" ? "Reset_Handler" : "main"}</span>
+              <span>➔</span>
+              <span className="text-emerald-400 font-bold">{name}</span>
+              <span className="text-emerald-300 font-bold">(@ 0x{((dis && dis.instructions && dis.instructions[0]) ? dis.instructions[0].addr : (pc || 0)).toString(16).padStart(8, "0")})</span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/30">
+              <span>RETURN TARGET (LR):</span>
+              <span className="font-mono font-bold text-amber-300">0x{(regs.LR || 0).toString(16).padStart(8, "0")}</span>
             </div>
           </div>
 
